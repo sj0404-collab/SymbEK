@@ -383,10 +383,10 @@
 </header>
 <div class="spaces" id="spaces">
   <button class="space on" id="sp-symbiosis" data-id="symbiosis" type="button">
-    <b>Symbiosis</b><span>основное ядро · наша оболочка</span>
+    <b>Kenji Space</b><span>это приложение · ядро вшито</span>
   </button>
   <button class="space" id="sp-kenji" data-id="kenji" type="button">
-    <b>Kenji-NX</b><span>их оболочка · ядро или их APK</span>
+    <b>Их Kenji</b><span>официальный APK, если ещё стоит</span>
   </button>
 </div>
 <div class="tabs">
@@ -1272,7 +1272,9 @@ function openSettingsSheet() {
     <span class="note" style="margin:0">${esc(live.resolutionNote||'')}</span></div>` : '';
   $('sheet-note').innerHTML = '<div>' + esc(saveLine) + '</div>' + res + togHtml;
   $('sheet-actions').innerHTML = `
-    <button class="ghost" id="a-set">Настройки Eden</button>
+    <button class="ghost" id="a-set">Настройки Kenji</button>
+    <button class="ghost" id="a-dram">DRAM</button>
+    <button class="ghost" id="a-mem">Память</button>
     <button class="ghost" id="a-aaa">AAA минимум</button>
     <button class="ghost" id="a-crash">Отчёт о вылете</button>
     <button class="ghost" id="a-pre">Сохранить пресет</button>
@@ -1281,7 +1283,15 @@ function openSettingsSheet() {
     <button class="ghost" id="a-saves-off">Сбросить сейвы</button>
     <button class="ghost" id="a-utils">Утилиты</button>
     <button class="ghost" id="a-close">Закрыть</button>`;
-  $('a-set').onclick = () => { closeSheet(); if (N() && N().openSettings) N().openSettings(); };
+  $('a-set').onclick = () => { openSettingsSheet(); };
+  if ($('a-dram')) $('a-dram').onclick = () => {
+    const r = parse(call('cycleDram'), { message: 'нет моста' });
+    $('sheet-note').textContent = r.message || '';
+  };
+  if ($('a-mem')) $('a-mem').onclick = () => {
+    const r = parse(call('cycleMemMode'), { message: 'нет моста' });
+    $('sheet-note').textContent = r.message || '';
+  };
   $('a-aaa').onclick = () => {
     const r = parse(call('applyAaaMode'), { message: 'нет моста — нужен новый APK' });
     $('sheet-note').textContent = (r.message || '') + (r.where ? ' · ' + r.where : '');
@@ -1596,11 +1606,59 @@ function loadSpaces() {
   paintSpaces();
 }
 
+
+function openUtilitiesSheet() {
+  HOLD = null;
+  const st = parse(call('status'), { items: [], dataRoot: '' });
+  const roots = parse(call('suggestRoots'), { roots: [], current: '' });
+  const items = (st.items || []).map(it =>
+    '<div class="logline"><div class="' + (it.present ? 'ok' : 'bad') + '">' + esc(it.label) + (it.present ? ' ✓' : ' ✕') + '</div>' +
+    '<div class="wh">' + esc(it.detail || '') + '</div></div>'
+  ).join('');
+  const sug = (roots.roots || []).map(r =>
+    '<div class="plug"><div class="nm"><b>' + esc(r.label) + '</b><span style="color:var(--dim);font-size:12px">' +
+    esc(r.path) + (r.keys ? ' · ключи' : '') + (r.kenji ? ' · Kenji' : '') + (r.eden ? ' · Eden' : '') +
+    '</span></div></div>'
+  ).join('');
+  $('sheet-title').textContent = 'Утилиты Kenji';
+  $('sheet-note').innerHTML =
+    '<div class="note">Папка данных — прошивка и ключи. Папка игр — NSP, та же что в Symbiosis. Ядро вшито (~54 МБ).</div>' +
+    items +
+    '<div style="margin-top:10px;font-weight:600">Корень данных</div>' +
+    '<div class="note">' + esc(roots.current || st.dataRoot || '') + '</div>' + sug;
+  $('sheet-actions').innerHTML =
+    '<button class="ghost" id="u-data">Папка данных</button>' +
+    '<button class="ghost" id="u-keys">Ключи prod.keys</button>' +
+    '<button class="ghost" id="u-fw">Прошивка</button>' +
+    '<button class="ghost" id="u-games">Папка игр</button>' +
+    '<button class="ghost" id="u-saves">Сейвы</button>' +
+    '<button class="ghost" id="u-crash">Отчёт</button>' +
+    '<button class="ghost" id="u-close">Закрыть</button>';
+  $('u-data').onclick = () => { if (N() && N().pickDataRoot) N().pickDataRoot(); };
+  $('u-keys').onclick = () => { if (N() && N().pickKeys) N().pickKeys(); };
+  $('u-fw').onclick = () => { if (N() && N().pickFirmware) N().pickFirmware(); };
+  $('u-games').onclick = () => { if (N() && N().pickFolder) N().pickFolder(); };
+  $('u-saves').onclick = () => { if (N() && N().pickSavesFolder) N().pickSavesFolder(); };
+  $('u-crash').onclick = () => {
+    const r = parse(call('crashReport'), { title: 'отчёт' });
+    $('sheet-title').textContent = r.title || 'Отчёт';
+    $('sheet-note').innerHTML = '<div>' + esc(r.detail || '') + '</div><pre>' +
+      esc((r.excerpt || '').slice(0, 2500)) + '</pre>';
+  };
+  $('u-close').onclick = closeSheet;
+  openSheet();
+}
+function openGameSheet(info) {
+  const path = (info && info.path) || '';
+  const g = GAMES.find(x => x.path === path) || { title: path, path: path };
+  holdMenu(g);
+}
+
 $('q').addEventListener('input', render);
 $('fab').onclick = () => { if (N() && N().pickFolder) N().pickFolder(); };
 $('fab-saves').onclick = pickSaves;
 $('btn-engines').onclick = () => openEnginesSheet();
-$('btn-tools').onclick = () => { if (N() && N().openUtilities) N().openUtilities(); };
+$('btn-tools').onclick = () => openUtilitiesSheet();
 $('btn-settings').onclick = openSettingsSheet;
 $('btn-plugins').onclick = openPluginsSheet;
 $('btn-reload').onclick = reloadUi;

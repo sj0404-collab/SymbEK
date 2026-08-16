@@ -46,15 +46,52 @@ class SettingsStore(context: Context) {
                     .put("on", p.getBoolean(t.key, t.default))
             )
         }
+        val res = p.getInt("resolution", 2).coerceIn(0, 3)
+        val resLabel = listOf("0.5x", "0.75x", "1x", "2x")[res]
+        val dram = p.getInt("memoryConfiguration", 0).coerceIn(0, 2)
+        val dramLabel = listOf("4 GiB", "6 GiB", "8 GiB")[dram]
+        val mem = p.getInt("memoryManagerMode", 2).coerceIn(0, 2)
+        val memLabel = listOf("Software", "Host", "Host Unchecked")[mem]
+        val nce = p.getBoolean("useNce", false)
         return JSONObject()
             .put("ok", true)
             .put("toggles", arr)
-            .put("memoryConfiguration", p.getInt("memoryConfiguration", 0))
-            .put("memoryManagerMode", p.getInt("memoryManagerMode", 2))
+            .put("memoryConfiguration", dram)
+            .put("memoryManagerMode", mem)
             .put("backendThreading", p.getInt("backendThreading", 1))
+            .put("resolution", res)
+            .put("resolutionLabel", resLabel)
+            .put("resolutionNote", "масштаб рендера Kenji")
+            .put("cpuLabel", if (nce) "NCE" else "Dynarmic")
+            .put("dramLabel", dramLabel)
+            .put("memLabel", memLabel)
             .put("gameFolder", p.getString("gameFolder", "") ?: "")
             .put("note", "пишется сразу на диск (commit), не в очередь apply()")
             .toString()
+    }
+
+    fun setInt(key: String, value: Int): Boolean = p.edit().putInt(key, value).commit()
+
+    fun setResolution(index: Int): String {
+        val i = index.coerceIn(0, 3)
+        setInt("resolution", i)
+        val label = listOf("0.5x", "0.75x", "1x", "2x")[i]
+        return JSONObject().put("ok", true).put("resolution", i)
+            .put("message", "масштаб $label").toString()
+    }
+
+    fun cycleDram(): String {
+        val next = (p.getInt("memoryConfiguration", 0) + 1) % 3
+        setInt("memoryConfiguration", next)
+        val label = listOf("4 GiB", "6 GiB", "8 GiB")[next]
+        return JSONObject().put("ok", true).put("message", "DRAM $label").toString()
+    }
+
+    fun cycleMemMode(): String {
+        val next = (p.getInt("memoryManagerMode", 2) + 1) % 3
+        setInt("memoryManagerMode", next)
+        val label = listOf("Software", "Host", "Host Unchecked")[next]
+        return JSONObject().put("ok", true).put("message", "память $label").toString()
     }
 
     fun setBool(key: String, on: Boolean): String {

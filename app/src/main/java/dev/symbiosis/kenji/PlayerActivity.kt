@@ -119,8 +119,11 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
             )
         ) throw IllegalStateException("deviceInitialize отказал")
 
+        val scale = when (s.int("resolution", 2)) {
+            0 -> 0.5f; 1 -> 0.75f; 3 -> 2f; else -> 1f
+        }
         if (!core.graphicsInitialize(
-                1f, 0f, true, true, false,
+                scale, 0f, true, true, false,
                 s.bool("enableMacroHLE", true),
                 s.bool("enableShaderCache", true),
                 s.bool("enableTextureRecompression", false),

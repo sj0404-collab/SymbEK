@@ -182,8 +182,11 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface fun bridgeVersion(): Int = 16
         @JavascriptInterface fun settings(): String = settings.json()
         @JavascriptInterface fun setBool(key: String, on: Boolean): String = settings.setBool(key, on)
-        @JavascriptInterface fun setResolution(index: Int): String =
-            JSONObject().put("ok", true).put("message", "масштаб Kenji задаётся в пресете ядра").toString()
+        @JavascriptInterface fun setResolution(index: Int): String = settings.setResolution(index)
+        @JavascriptInterface fun cycleDram(): String = settings.cycleDram()
+        @JavascriptInterface fun cycleMemMode(): String = settings.cycleMemMode()
+        @JavascriptInterface fun pickKeys() { main.post { pickKeys.launch(arrayOf("*/*")) } }
+        @JavascriptInterface fun pickFirmware() { main.post { pickFirmware.launch(arrayOf("*/*")) } }
         @JavascriptInterface fun folders(): String = folders.json()
         @JavascriptInterface fun games(): String = folders.gamesJson()
         @JavascriptInterface fun pickFolder() { main.post { pickFolder.launch(null) } }
@@ -242,13 +245,12 @@ class MainActivity : AppCompatActivity() {
             JSONObject().put("path", "").put("items", JSONArray()).toString()
 
         @JavascriptInterface fun keysOk(): Boolean = DataRoot.keysPresent()
-        @JavascriptInterface fun files(uriString: String): String = JSONObject().put("files", JSONArray()).toString()
+        @JavascriptInterface fun files(uriString: String): String = folders.filesJson(uriString)
         @JavascriptInterface fun icon(path: String): String = ""
         @JavascriptInterface fun cover(path: String): String = ""
-        @JavascriptInterface fun shot(path: String): String = ""
-        @JavascriptInterface fun shots(path: String, title: String): String = JSONObject().put("items", JSONArray()).toString()
-        @JavascriptInterface fun memory(): String =
-            JSONObject().put("leftMb", 0).put("warn", false).put("usedMb", 0).put("budgetMb", 0).toString()
+        @JavascriptInterface fun shot(path: String): String = encodeJpeg(path)
+        @JavascriptInterface fun shots(path: String, title: String): String = shotsJson()
+        @JavascriptInterface fun memory(): String = memoryJson()
         @JavascriptInterface fun prepareShaders(): String =
             JSONObject().put("ok", true).put("note", "шейдер-кэш Kenji живёт в games/<title>/cache/shader").toString()
         @JavascriptInterface fun applyAaaMode(): String {
@@ -272,19 +274,30 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface fun applyPreset(name: String): String = Presets.apply(name, settings)
         @JavascriptInterface fun removePreset(name: String): String = Presets.remove(name)
 
-        @JavascriptInterface fun converterItems(): String = JSONObject().put("items", JSONArray()).toString()
-        @JavascriptInterface fun pickConvert() { main.post { Toast.makeText(this@MainActivity, "конвертер — в Symbiosis, здесь ядро Kenji", Toast.LENGTH_SHORT).show() } }
-        @JavascriptInterface fun deleteConverted(path: String): String = JSONObject().put("ok", false).toString()
-        @JavascriptInterface fun canOpen(path: String): Boolean = true
-        @JavascriptInterface fun convertQueue(): String = JSONObject().put("busy", false).put("pending", 0).toString()
+        @JavascriptInterface fun converterItems(): String = Inbox.listJson()
+        @JavascriptInterface fun pickConvert() { main.post { pickConvertFiles.launch(arrayOf("*/*")) } }
+        @JavascriptInterface fun deleteConverted(path: String): String = Inbox.delete(path)
+        @JavascriptInterface fun canOpen(path: String): Boolean = Inbox.canOpen(path)
+        @JavascriptInterface fun convertQueue(): String = Inbox.queueJson()
         @JavascriptInterface fun readText(path: String): String = JSONObject().put("ok", false).put("reason", "нет").toString()
         @JavascriptInterface fun adoptSave(path: String, title: String): String = JSONObject().put("ok", true).toString()
         @JavascriptInterface fun rescan() { main.post { reload() } }
         @JavascriptInterface fun reloadInterface() { main.post { web.loadUrl("file:///android_asset/kenji.html") } }
-        @JavascriptInterface fun openTools() { main.post { pickKeys.launch(arrayOf("*/*")) } }
-        @JavascriptInterface fun openUtilities() { main.post { pickFirmware.launch(arrayOf("*/*")) } }
-        @JavascriptInterface fun openSettings() {}
-        @JavascriptInterface fun openGameMenu(path: String) {}
+        @JavascriptInterface fun openTools() {
+            main.post { web.evaluateJavascript("try{openUtilitiesSheet()}catch(e){}", null) }
+        }
+        @JavascriptInterface fun openUtilities() {
+            main.post { web.evaluateJavascript("try{openUtilitiesSheet()}catch(e){}", null) }
+        }
+        @JavascriptInterface fun openSettings() {
+            main.post { web.evaluateJavascript("try{openSettingsSheet()}catch(e){}", null) }
+        }
+        @JavascriptInterface fun openGameMenu(path: String) {
+            main.post {
+                val g = JSONObject().put("path", path).toString()
+                web.evaluateJavascript("try{openGameSheet($g)}catch(e){}", null)
+            }
+        }
         @JavascriptInterface fun openEngines() { main.post { downloadCore() } }
         @JavascriptInterface fun spaces(): String {
             val ext = OfficialKenji.installed(this@MainActivity)
@@ -323,7 +336,7 @@ class MainActivity : AppCompatActivity() {
                         .put("usable", ready)
                         .put("selected", true)
                         .put("launches", ready)
-                        .put("note", if (ready) "скачан" else "скачайте ядро")
+                        .put("note", if (ready) "вшито в APK · ${st.let { if (it is EngineLoader.State.Ready) it.bytes / 1048576 else 54 }} МБ" else "ядра нет в APK")
                 ))
                 .toString()
         }
@@ -383,5 +396,51 @@ class MainActivity : AppCompatActivity() {
                 else -> "missing"
             }
         }
+    }
+
+    private val pickConvert = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNullOrEmpty()) return@registerForActivityResult
+        uris.forEach { Inbox.import(this, it) }
+        web.evaluateJavascript(
+            "try{if(typeof onConverted==='function')onConverted({ok:true,message:'файлы в конвертере'})}catch(e){}",
+            null
+        )
+    }
+
+    private fun memoryJson(): String {
+        val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+        val info = android.app.ActivityManager.MemoryInfo()
+        am.getMemoryInfo(info)
+        val left = info.availMem / (1024 * 1024)
+        val total = info.totalMem / (1024 * 1024)
+        return JSONObject()
+            .put("leftMb", left)
+            .put("usedMb", (total - left).coerceAtLeast(0))
+            .put("budgetMb", total)
+            .put("warn", info.lowMemory || left < 800)
+            .put("note", if (info.lowMemory) "мало RAM" else "")
+            .toString()
+    }
+
+    private fun encodeJpeg(path: String): String {
+        if (path.isBlank()) return ""
+        val f = File(path)
+        if (!f.isFile) return ""
+        return runCatching {
+            val bytes = f.readBytes()
+            if (bytes.size < 32) ""
+            else android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        }.getOrDefault("")
+    }
+
+    private fun shotsJson(): String {
+        val dir = File(DataRoot.resolve(), "screenshots")
+        val arr = JSONArray()
+        dir.listFiles()
+            ?.filter { it.isFile && it.extension.lowercase() in setOf("jpg", "jpeg", "png") }
+            ?.sortedByDescending { it.lastModified() }
+            ?.take(24)
+            ?.forEach { arr.put(JSONObject().put("path", it.absolutePath).put("name", it.name)) }
+        return JSONObject().put("items", arr).toString()
     }
 }

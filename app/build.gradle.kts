@@ -20,7 +20,9 @@ android {
     }
     buildTypes {
         release {
-            isMinifyEnabled = true
+            // Official Kenji ships unminified. R8 + JNA needs desktop AWT
+            // stubs we do not have; minify here only delayed a working APK.
+            isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

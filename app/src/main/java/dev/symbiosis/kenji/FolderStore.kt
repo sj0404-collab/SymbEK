@@ -55,6 +55,21 @@ class FolderStore(private val context: Context) {
         return JSONObject().put("ok", true).put("message", "папка добавлена").put("left", next.size).toString()
     }
 
+    fun filesJson(uriString: String): String {
+        val arr = JSONArray()
+        val tree = runCatching { DocumentFile.fromTreeUri(context, Uri.parse(uriString)) }.getOrNull()
+        tree?.listFiles()?.sortedBy { it.name ?: "" }?.forEach { f ->
+            arr.put(
+                JSONObject()
+                    .put("name", f.name ?: "")
+                    .put("bytes", f.length())
+                    .put("size", human(f.length()))
+                    .put("launchable", isRom(f.name ?: ""))
+            )
+        }
+        return JSONObject().put("files", arr).toString()
+    }
+
     fun remove(uri: String): String {
         val next = uris().filter { it != uri }
         prefs.edit().putStringSet("uris", next.toSet()).commit()
