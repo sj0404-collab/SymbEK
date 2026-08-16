@@ -94,7 +94,7 @@ object EngineLoader {
         // Of the exact file published as the engine-kenji release asset,
         // verified by downloading it back over the public URL rather than
         // trusting the copy that was uploaded.
-        Engine.KENJI to "969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8",
+        Engine.KENJI to "d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590",
     )
 
     fun state(context: Context, engine: Engine): State {

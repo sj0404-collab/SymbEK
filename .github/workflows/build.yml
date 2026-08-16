@@ -40,13 +40,21 @@ jobs:
           mkdir -p "$DEST"
           ZIP=/tmp/natives-2.1.0-pr.2.zip
           URL=https://github.com/sj0404-collab/kenji-symbiosis/releases/download/natives-2.1.0-pr.2/natives-2.1.0-pr.2.zip
+          OFFICIAL=https://git.ryujinx.app/Kenji-NX/Android/releases/download/2.1.0-pr.2/kenji-nx-v2.1.0-pr.2-standard.apk
           WANT_ZIP=76b3ee2195d851b5756a7d5347219644d0a7d26a5c34bf848192acd3cc901146
           WANT_CORE=d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590
-          curl -fL --retry 3 -o "$ZIP" "$URL"
-          GOT_ZIP=$(sha256sum "$ZIP" | awk '{print $1}')
-          echo "natives zip sha256 $GOT_ZIP"
-          test "$GOT_ZIP" = "$WANT_ZIP"
-          unzip -o "$ZIP" -d "$DEST"
+          if curl -fL --retry 3 -o "$ZIP" "$URL"; then
+            GOT_ZIP=$(sha256sum "$ZIP" | awk '{print $1}')
+            echo "natives zip sha256 $GOT_ZIP"
+            test "$GOT_ZIP" = "$WANT_ZIP"
+            unzip -o "$ZIP" -d "$DEST"
+          else
+            echo "zip mirror missed, taking official APK"
+            APK=/tmp/kenji-official.apk
+            curl -fL --retry 3 -o "$APK" "$OFFICIAL"
+            test "$(stat -c%s "$APK")" = "49840045"
+            unzip -o -j "$APK" 'lib/arm64-v8a/*' -d "$DEST"
+          fi
           GOT_CORE=$(sha256sum "$DEST/libkenjinx.so" | awk '{print $1}')
           echo "libkenjinx.so sha256 $GOT_CORE"
           test "$GOT_CORE" = "$WANT_CORE"

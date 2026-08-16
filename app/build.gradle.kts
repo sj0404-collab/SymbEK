@@ -15,7 +15,7 @@ android {
         versionName = "0.2.0"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild {
-            cmake { arguments += listOf("-DANDROID_STL=c++_shared") }
+            cmake { arguments += listOf("-DANDROID_STL=c++_static") }
         }
     }
     buildTypes {
@@ -43,6 +43,9 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // Official APK + CMake/JNA both ship these names.
+            pickFirsts += "**/libc++_shared.so"
+            pickFirsts += "**/libjnidispatch.so"
         }
     }
 }
