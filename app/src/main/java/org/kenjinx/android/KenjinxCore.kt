@@ -51,6 +51,7 @@ interface KenjinxCore : Library {
     fun deviceVerifyFirmware(fileDescriptor: Int, isXci: Boolean): String
     fun deviceGetInstalledFirmwareVersion(): String
     fun deviceReloadFilesystem()
+    fun deviceReinitEmulation()
 }
 
 object Kenji {

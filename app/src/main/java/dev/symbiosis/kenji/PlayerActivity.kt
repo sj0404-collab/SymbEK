@@ -17,6 +17,9 @@ import android.widget.TextView
 import android.widget.Toast
 import com.sun.jna.JNIEnv
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import org.kenjinx.android.Kenji
 import org.kenjinx.android.KenjinxNative
 import org.kenjinx.android.NativeHelpers
@@ -28,6 +31,8 @@ import org.kenjinx.android.NativeHelpers
 class PlayerActivity : Activity(), SurfaceHolder.Callback {
 
     companion object {
+        private val javaReady = AtomicBoolean(false)
+
         fun intent(context: Context, path: String, title: String): Intent =
             Intent(context, PlayerActivity::class.java)
                 .putExtra("path", path)
@@ -38,6 +43,7 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
     private var pfd: ParcelFileDescriptor? = null
     private var loop: Thread? = null
     private var started = false
+    private var playing = false
     private lateinit var status: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -110,52 +116,16 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         val s = SettingsStore(this)
 
         org.kenjinx.android.MainActivity.attachVm()
-        val registered = FirmwareBridge.kenjiRegistered(home)
-        val stashed = File(registered.parentFile, "registered.stash")
-        val hadFw = FirmwareBridge.kenjiReady(home)
-        // SwitchDevice ctor parses every NCA. A single bad file → javaInitialize
-        // false, and VirtualFileSystem then cannot be created again in this process.
-        if (hadFw && registered.isDirectory) {
-            if (stashed.exists()) stashed.deleteRecursively()
-            registered.renameTo(stashed)
-        }
-        val inited = try {
-            core.javaInitialize(data, JNIEnv.CURRENT)
-        } finally {
-            if (stashed.isDirectory) {
-                if (registered.exists()) registered.deleteRecursively()
-                stashed.renameTo(registered)
-            }
-        }
-        if (!inited) {
-            val log = lastKenjiLog(home)
-            throw IllegalStateException(
-                "javaInitialize отказал. ключи=${DataRoot.kenjiKeysFile(home).length()}Б " +
-                    "NCA=${FirmwareBridge.kenjiNcaCount(home)} путь=$data" +
-                    if (log.isNotBlank()) " · лог: $log" else " · Logs/ пуст"
-            )
-        }
+        ensureJava(core, home, data)
+        runCatching { core.deviceReinitEmulation() }
         runCatching { core.deviceReloadFilesystem() }
         installPendingFirmware(core)
-        core.loggingSetEnabled(3, true) // Error
-        core.loggingSetEnabled(2, true) // Warning
-        if (!core.deviceInitialize(
-                s.int("memoryManagerMode", 2),
-                s.bool("useNce", false),
-                s.int("memoryConfiguration", 0),
-                1, 1, 0,
-                s.bool("enableDocked", false),
-                s.bool("enablePptc", true),
-                s.bool("enableLowPowerPptc", false),
-                s.bool("enableJitCacheEviction", false),
-                false,
-                s.bool("enableFsIntegrityChecks", false),
-                0,
-                "UTC",
-                s.bool("ignoreMissingServices", false)
-            )
-        ) throw IllegalStateException("deviceInitialize отказал")
+        core.loggingSetEnabled(3, true)
+        core.loggingSetEnabled(2, true)
 
+        // Official order (MainViewModel.loadGame):
+        // graphicsInitialize → graphicsInitializeRenderer → deviceInitialize(main thread) → load.
+        // deviceInitialize returns false if Renderer is still null.
         val scale = when (s.int("resolution", 2)) {
             0 -> 0.5f; 1 -> 0.75f; 3 -> 2f; else -> 1f
         }
@@ -178,6 +148,10 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         }
         core.graphicsRendererSetSize(w, h)
 
+        if (!deviceInitializeOnUi(core, s)) {
+            throw IllegalStateException("deviceInitialize отказал (нужен главный поток и Vulkan renderer)")
+        }
+
         val type = when (path.substringAfterLast('.', "").lowercase().substringBefore('?')) {
             "xci", "xcz" -> 2
             "nro" -> 3
@@ -186,23 +160,85 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         if (!core.deviceLoadDescriptor(fd, type, -1)) {
             throw IllegalStateException("не открыл игру (проверьте ключи и прошивку в папке данных)")
         }
+        playing = true
         runOnUiThread { status.text = "Kenji · играет" }
         core.graphicsRendererRunLoop()
+    }
+
+    private fun ensureJava(core: org.kenjinx.android.KenjinxCore, home: File, data: String) {
+        if (javaReady.get()) return
+        val registered = FirmwareBridge.kenjiRegistered(home)
+        val stashed = File(registered.parentFile, "registered.stash")
+        if (FirmwareBridge.kenjiReady(home) && registered.isDirectory) {
+            if (stashed.exists()) stashed.deleteRecursively()
+            registered.renameTo(stashed)
+        }
+        val inited = try {
+            core.javaInitialize(data, JNIEnv.CURRENT)
+        } finally {
+            if (stashed.isDirectory) {
+                if (registered.exists()) registered.deleteRecursively()
+                stashed.renameTo(registered)
+            }
+        }
+        if (inited) {
+            javaReady.set(true)
+            return
+        }
+        if (javaReady.get()) return
+        val log = lastKenjiLog(home)
+        throw IllegalStateException(
+            "javaInitialize отказал. ключи=${DataRoot.kenjiKeysFile(home).length()}Б " +
+                "NCA=${FirmwareBridge.kenjiNcaCount(home)} путь=$data" +
+                if (log.isNotBlank()) " · лог: $log" else " · Logs/ пуст"
+        )
+    }
+
+    private fun deviceInitializeOnUi(core: org.kenjinx.android.KenjinxCore, s: SettingsStore): Boolean {
+        val done = CountDownLatch(1)
+        val ok = AtomicBoolean(false)
+        runOnUiThread {
+            try {
+                ok.set(
+                    core.deviceInitialize(
+                        s.int("memoryManagerMode", 2),
+                        s.bool("useNce", false),
+                        s.int("memoryConfiguration", 0),
+                        1, 1, 0,
+                        s.bool("enableDocked", false),
+                        s.bool("enablePptc", true),
+                        s.bool("enableLowPowerPptc", false),
+                        s.bool("enableJitCacheEviction", false),
+                        false,
+                        s.bool("enableFsIntegrityChecks", false),
+                        0,
+                        java.util.TimeZone.getDefault().id,
+                        s.bool("ignoreMissingServices", false)
+                    )
+                )
+            } finally {
+                done.countDown()
+            }
+        }
+        if (!done.await(20, TimeUnit.SECONDS)) return false
+        return ok.get()
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
-        runCatching { Kenji.core.deviceSignalEmulationClose() }
-        runCatching { Kenji.core.deviceCloseEmulation() }
+        if (playing) {
+            runCatching { Kenji.core.deviceSignalEmulationClose() }
+        }
     }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() { leave() }
 
     override fun onDestroy() {
-        runCatching { Kenji.core.deviceSignalEmulationClose() }
-        runCatching { Kenji.core.deviceCloseEmulation() }
+        if (playing) {
+            runCatching { Kenji.core.deviceSignalEmulationClose() }
+        }
         loop?.join(1500)
         runCatching { pfd?.close() }
         super.onDestroy()
