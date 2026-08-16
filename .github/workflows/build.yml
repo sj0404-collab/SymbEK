@@ -30,20 +30,31 @@ jobs:
       - name: NDK and CMake
         run: |
           yes | sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1" || true
-      - name: Embed Kenji core
+      - name: Embed official Kenji-NX 2.1.0-pr.2 natives
         run: |
-          # Official name is libkenjinx.so. Same file we already built
-          # (engine-kenji). Shipping it in jniLibs means the player does
-          # not depend on a download that can be missing or still writable.
+          # Same .so set as kenji-nx-v2.1.0-pr.2-standard.apk:
+          # libkenjinx + official jni + OpenAL + FFmpeg + OpenSSL +
+          # SDL2 + Skia + adrenotools hooks. Not the older engine-kenji dump.
           set -euo pipefail
           DEST=app/src/main/jniLibs/arm64-v8a
           mkdir -p "$DEST"
-          URL=https://github.com/sj0404-collab/eden-symbiosis/releases/download/engine-kenji/libkenji.so
-          WANT=969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8
-          curl -fL --retry 3 -o "$DEST/libkenjinx.so" "$URL"
-          GOT=$(sha256sum "$DEST/libkenjinx.so" | awk '{print $1}')
-          echo "core sha256 $GOT"
-          test "$GOT" = "$WANT"
+          ZIP=/tmp/natives-2.1.0-pr.2.zip
+          URL=https://github.com/sj0404-collab/kenji-symbiosis/releases/download/natives-2.1.0-pr.2/natives-2.1.0-pr.2.zip
+          WANT_ZIP=76b3ee2195d851b5756a7d5347219644d0a7d26a5c34bf848192acd3cc901146
+          WANT_CORE=d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590
+          curl -fL --retry 3 -o "$ZIP" "$URL"
+          GOT_ZIP=$(sha256sum "$ZIP" | awk '{print $1}')
+          echo "natives zip sha256 $GOT_ZIP"
+          test "$GOT_ZIP" = "$WANT_ZIP"
+          unzip -o "$ZIP" -d "$DEST"
+          GOT_CORE=$(sha256sum "$DEST/libkenjinx.so" | awk '{print $1}')
+          echo "libkenjinx.so sha256 $GOT_CORE"
+          test "$GOT_CORE" = "$WANT_CORE"
+          test -f "$DEST/libavcodec.so"
+          test -f "$DEST/libssl.so"
+          test -f "$DEST/libsdl2.so"
+          test -f "$DEST/libskiasharp.so"
+          test -f "$DEST/libkenjinxjni.so"
           ls -lh "$DEST"
       - name: Build
         run: |
@@ -60,13 +71,14 @@ jobs:
           name: Kenji-Space
           path: app/build/outputs/apk/**/*.apk
       - name: Release
-        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
           cp "$APK" Kenji-Space.apk
+          MD5=$(md5sum Kenji-Space.apk | cut -d' ' -f1)
+          SIZE=$(stat -c%s Kenji-Space.apk)
           gh release delete latest --yes || true
           gh release create latest Kenji-Space.apk \
             --title "Kenji Space" \
-            --notes "Лёгкая оболочка Kenji. Ядро скачивается отдельно. MD5 $(md5sum Kenji-Space.apk | cut -d' ' -f1)"
+            --notes "Ядро и нативы официального Kenji-NX 2.1.0-pr.2 (libkenjinx + FFmpeg + OpenSSL + SDL2 + Skia + OpenAL + jni). Оболочка — как у Symbiosis. MD5 ${MD5} · ${SIZE} байт"
