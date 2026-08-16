@@ -10,10 +10,10 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 
 /**
- * Eden/Yuzu store firmware as loose NCAs:
- *   nand/system/Contents/registered/*.nca
+ * Eden/Yuzu store firmware as loose NCAs under
+ * nand/system/Contents/registered (files named .nca).
  * Kenji/Ryujinx LoadEntries only accepts Ryujinx layout:
- *   bis/system/Contents/registered/{id}.nca/00
+ * bis/system/Contents/registered/{id}.nca/00
  *
  * Same bytes. No core change — we hardlink (or copy) into Kenji's tree.
  */
@@ -183,7 +183,7 @@ object FirmwareBridge {
         } ?: 0
     }
 
-    /** Loose *.nca files or already-Ryujinx {id}.nca/00 directories. */
+    /** Loose .nca files, or already-Ryujinx {id}.nca/00 directories. */
     private fun collectEdenNcas(dir: File): List<File> {
         if (!dir.isDirectory) return emptyList()
         val out = ArrayList<File>()
