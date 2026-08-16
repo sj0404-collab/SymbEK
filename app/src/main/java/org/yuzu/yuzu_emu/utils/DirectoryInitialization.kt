@@ -4,5 +4,5 @@ import dev.symbiosis.kenji.KenjiApp
 
 object DirectoryInitialization {
     val userDirectory: String
-        get() = KenjiApp.filesRoot().absolutePath
+        get() = dev.symbiosis.kenji.DataRoot.resolve()
 }

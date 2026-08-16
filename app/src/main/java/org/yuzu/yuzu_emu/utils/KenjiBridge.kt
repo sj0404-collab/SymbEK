@@ -154,10 +154,7 @@ object KenjiBridge {
         val loaded = load(context)
         if (!loaded.ok) return loaded
 
-        // Kenji keeps its system files under its own directory, kept separate
-        // from Eden's so neither can corrupt the other's state. Games, keys
-        // and firmware are shared; internal caches are not.
-        val dataDir = File(context.getExternalFilesDir(null), "kenji").apply { mkdirs() }
+        val dataDir = dev.symbiosis.kenji.DataRoot.kenjiHome()
 
         val err = try {
             nativeInitialize(dataDir.absolutePath)

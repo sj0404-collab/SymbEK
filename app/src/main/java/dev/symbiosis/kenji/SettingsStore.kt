@@ -32,7 +32,7 @@ class SettingsStore(context: Context) {
         Toggle("enableTextureRecompression", "Texture recompression", "", false),
         Toggle("enableMacroHLE", "Macro HLE", "", true),
         Toggle("enablePerformanceMode", "Performance mode", "на Mali лучше выкл", false),
-        Toggle("preferExternal", "Открывать их Kenji, если стоит", "", true),
+        Toggle("preferExternal", "Открывать их Kenji, если стоит", "выкл = играть здесь, можно удалить официальный", false),
     )
 
     fun json(): String {

@@ -2,18 +2,24 @@ package dev.symbiosis.kenji
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import org.json.JSONArray
 import org.json.JSONObject
 import org.yuzu.yuzu_emu.utils.EngineDownloader
 import org.yuzu.yuzu_emu.utils.EngineLoader
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
@@ -26,15 +32,45 @@ class MainActivity : AppCompatActivity() {
     private val pickFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri == null) return@registerForActivityResult
         val r = folders.add(uri)
-        web.evaluateJavascript("try{onFolderAdded($r)}catch(e){}", null)
+        web.evaluateJavascript("try{if(typeof onFolderAdded==='function')onFolderAdded($r)}catch(e){}", null)
         reload()
+    }
+
+    private val pickData = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        runCatching {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }
+        val path = treePath(uri)
+        val r = if (path != null) DataRoot.setPath(path)
+        else JSONObject().put("ok", false).put("message", "не удалось прочитать путь к папке").toString()
+        web.evaluateJavascript("try{if(typeof onSavesPicked==='function')onSavesPicked($r)}catch(e){}", null)
+        reload()
+        Toast.makeText(this, JSONObject(r).optString("message"), Toast.LENGTH_LONG).show()
     }
 
     private val pickPlugin = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNullOrEmpty()) return@registerForActivityResult
         var last = "{}"
         uris.forEach { last = plugins.install(it) }
-        web.evaluateJavascript("try{onPluginsChanged($last)}catch(e){}", null)
+        web.evaluateJavascript("try{if(typeof onPluginsChanged==='function')onPluginsChanged($last)}catch(e){}", null)
+    }
+
+    private val pickKeys = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        val r = installKeyFile(uri)
+        Toast.makeText(this, JSONObject(r).optString("message"), Toast.LENGTH_LONG).show()
+        reload()
+    }
+
+    private val pickFirmware = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        val r = stageFirmware(uri)
+        Toast.makeText(this, JSONObject(r).optString("message"), Toast.LENGTH_LONG).show()
+        reload()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -43,16 +79,20 @@ class MainActivity : AppCompatActivity() {
         settings = SettingsStore(this)
         folders = FolderStore(this)
         plugins = PluginStore(this)
+        DataRoot.ensureKenjiLayout(DataRoot.kenjiHome())
         web = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = true
-            addJavascriptInterface(Bridge(), "Kenji")
+            val bridge = Bridge()
+            addJavascriptInterface(bridge, "Symbiosis")
+            addJavascriptInterface(bridge, "Kenji")
             webViewClient = WebViewClient()
             loadUrl("file:///android_asset/kenji.html")
         }
         setContentView(web)
         handleView(intent)
+        maybeAskAllFiles()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -66,12 +106,84 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun reload() {
-        web.evaluateJavascript("try{loadGames();loadStatus();paintCore();}catch(e){}", null)
+        web.evaluateJavascript(
+            "try{if(typeof loadGames==='function')loadGames();if(typeof loadStatus==='function')loadStatus();}catch(e){}",
+            null
+        )
     }
 
+    private fun maybeAskAllFiles() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            // Needed to share /sdcard/Kenji or another app's files folder.
+            runCatching {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
+                )
+            }
+        }
+    }
+
+    private fun treePath(uri: Uri): String? {
+        val id = runCatching { android.provider.DocumentsContract.getTreeDocumentId(uri) }.getOrNull()
+            ?: return null
+        val parts = id.split(':')
+        if (parts.isEmpty()) return null
+        val volume = parts[0]
+        val relative = parts.getOrElse(1) { "" }
+        val candidates = buildList {
+            if (volume == "primary") add("${Environment.getExternalStorageDirectory()}/$relative")
+            add("/storage/$volume/$relative")
+        }
+        return candidates.firstOrNull { File(it).isDirectory }
+    }
+
+    private fun installKeyFile(uri: Uri): String = runCatching {
+        val name = runCatching {
+            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { if (it.moveToFirst()) it.getString(0) else null }
+        }.getOrNull() ?: "prod.keys"
+        if (!name.endsWith(".keys", true)) {
+            return@runCatching JSONObject().put("ok", false).put("message", "нужен prod.keys или title.keys").toString()
+        }
+        val root = DataRoot.kenjiHome()
+        val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: return@runCatching JSONObject().put("ok", false).put("message", "не прочитался файл").toString()
+        if (bytes.size < 100) {
+            return@runCatching JSONObject().put("ok", false).put("message", "файл слишком маленький").toString()
+        }
+        listOf(File(root, "system"), File(root, "keys")).forEach { dir ->
+            dir.mkdirs()
+            File(dir, name).writeBytes(bytes)
+        }
+        JSONObject().put("ok", true).put("message", "ключи $name записаны в ${root.absolutePath}").toString()
+    }.getOrElse { JSONObject().put("ok", false).put("message", it.message ?: "ключи не встали").toString() }
+
+    private fun stageFirmware(uri: Uri): String = runCatching {
+        val name = runCatching {
+            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { if (it.moveToFirst()) it.getString(0) else null }
+        }.getOrNull() ?: "firmware.bin"
+        val dest = File(DataRoot.kenjiHome(), "pending-firmware")
+        dest.mkdirs()
+        val out = File(dest, name)
+        contentResolver.openInputStream(uri)?.use { input ->
+            out.outputStream().use { input.copyTo(it) }
+        } ?: return@runCatching JSONObject().put("ok", false).put("message", "не прочиталась прошивка").toString()
+        settings.setString("pendingFirmware", out.absolutePath)
+        JSONObject().put("ok", true)
+            .put("message", "прошивка сохранена ($name). Поставится в эту папку при первом запуске ядра.")
+            .toString()
+    }.getOrElse { JSONObject().put("ok", false).put("message", it.message ?: "прошивка не сохранилась").toString() }
+
     inner class Bridge {
+        @JavascriptInterface fun bridgeVersion(): Int = 16
         @JavascriptInterface fun settings(): String = settings.json()
         @JavascriptInterface fun setBool(key: String, on: Boolean): String = settings.setBool(key, on)
+        @JavascriptInterface fun setResolution(index: Int): String =
+            JSONObject().put("ok", true).put("message", "масштаб Kenji задаётся в пресете ядра").toString()
         @JavascriptInterface fun folders(): String = folders.json()
         @JavascriptInterface fun games(): String = folders.gamesJson()
         @JavascriptInterface fun pickFolder() { main.post { pickFolder.launch(null) } }
@@ -83,21 +195,154 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface fun removePlugin(id: String): String = plugins.remove(id)
 
         @JavascriptInterface
-        fun core(): String {
+        fun status(): String = JSONObject()
+            .put("items", DataRoot.statusItems())
+            .put("dataRoot", DataRoot.resolve())
+            .toString()
+
+        @JavascriptInterface fun dataRoot(): String =
+            JSONObject().put("path", DataRoot.resolve())
+                .put("hasLoad", File(DataRoot.resolve(), "load").isDirectory)
+                .put("hasSaves", File(DataRoot.resolve(), "bis").isDirectory)
+                .toString()
+
+        @JavascriptInterface fun suggestRoots(): String = DataRoot.suggest()
+        @JavascriptInterface fun pickDataRoot() { main.post { pickData.launch(null) } }
+        @JavascriptInterface fun pickSavesFolder() { main.post { pickData.launch(null) } }
+        @JavascriptInterface fun clearSavesFolder() {
+            DataRoot.configured = null
+        }
+
+        @JavascriptInterface
+        fun saveSource(): String {
+            val root = DataRoot.resolve()
+            val bis = File(root, "bis")
+            return JSONObject()
+                .put("path", root)
+                .put("name", File(root).name)
+                .put("titles", bis.walkTopDown().count { it.isDirectory && it.name.length == 32 })
+                .put("size", "")
+                .toString()
+        }
+
+        @JavascriptInterface fun saves(): String {
+            val root = File(DataRoot.resolve(), "bis")
+            val items = JSONArray()
+            if (root.isDirectory) {
+                root.walkTopDown().maxDepth(4).forEach { f ->
+                    if (f.isDirectory && f != root && (f.listFiles()?.any { it.isFile } == true)) {
+                        items.put(JSONObject().put("name", f.name).put("detail", f.absolutePath))
+                    }
+                }
+            }
+            return JSONObject().put("path", root.absolutePath).put("items", items).toString()
+        }
+
+        @JavascriptInterface fun mods(): String =
+            JSONObject().put("path", "").put("items", JSONArray()).toString()
+
+        @JavascriptInterface fun keysOk(): Boolean = DataRoot.keysPresent()
+        @JavascriptInterface fun files(uriString: String): String = JSONObject().put("files", JSONArray()).toString()
+        @JavascriptInterface fun icon(path: String): String = ""
+        @JavascriptInterface fun cover(path: String): String = ""
+        @JavascriptInterface fun shot(path: String): String = ""
+        @JavascriptInterface fun shots(path: String, title: String): String = JSONObject().put("items", JSONArray()).toString()
+        @JavascriptInterface fun memory(): String =
+            JSONObject().put("leftMb", 0).put("warn", false).put("usedMb", 0).put("budgetMb", 0).toString()
+        @JavascriptInterface fun prepareShaders(): String =
+            JSONObject().put("ok", true).put("note", "шейдер-кэш Kenji живёт в games/<title>/cache/shader").toString()
+        @JavascriptInterface fun applyAaaMode(): String {
+            settings.setBool("useNce", false)
+            settings.setBool("enablePerformanceMode", false)
+            settings.setBool("enableFsIntegrityChecks", false)
+            return JSONObject().put("ok", true).put("applied", 3)
+                .put("message", "AAA минимум для Kenji: NCE выкл, performance выкл, integrity выкл")
+                .put("where", "настройки Kenji").toString()
+        }
+        @JavascriptInterface fun crashReport(): String {
+            val f = File(filesDir, "logs/crash.log")
+            val text = if (f.isFile) f.readText().takeLast(4000) else "крашей оболочки нет"
+            return JSONObject().put("ok", true).put("title", "Отчёт Kenji Space")
+                .put("detail", DataRoot.resolve()).put("excerpt", text)
+                .put("path", f.absolutePath).toString()
+        }
+
+        @JavascriptInterface fun presets(): String = Presets.listJson()
+        @JavascriptInterface fun savePreset(name: String): String = Presets.snapshot(name, settings)
+        @JavascriptInterface fun applyPreset(name: String): String = Presets.apply(name, settings)
+        @JavascriptInterface fun removePreset(name: String): String = Presets.remove(name)
+
+        @JavascriptInterface fun converterItems(): String = JSONObject().put("items", JSONArray()).toString()
+        @JavascriptInterface fun pickConvert() { main.post { Toast.makeText(this@MainActivity, "конвертер — в Symbiosis, здесь ядро Kenji", Toast.LENGTH_SHORT).show() } }
+        @JavascriptInterface fun deleteConverted(path: String): String = JSONObject().put("ok", false).toString()
+        @JavascriptInterface fun canOpen(path: String): Boolean = true
+        @JavascriptInterface fun convertQueue(): String = JSONObject().put("busy", false).put("pending", 0).toString()
+        @JavascriptInterface fun readText(path: String): String = JSONObject().put("ok", false).put("reason", "нет").toString()
+        @JavascriptInterface fun adoptSave(path: String, title: String): String = JSONObject().put("ok", true).toString()
+        @JavascriptInterface fun rescan() { main.post { reload() } }
+        @JavascriptInterface fun reloadInterface() { main.post { web.loadUrl("file:///android_asset/kenji.html") } }
+        @JavascriptInterface fun openTools() { main.post { pickKeys.launch(arrayOf("*/*")) } }
+        @JavascriptInterface fun openUtilities() { main.post { pickFirmware.launch(arrayOf("*/*")) } }
+        @JavascriptInterface fun openSettings() {}
+        @JavascriptInterface fun openGameMenu(path: String) {}
+        @JavascriptInterface fun openEngines() { main.post { downloadCore() } }
+        @JavascriptInterface fun spaces(): String {
+            val ext = OfficialKenji.installed(this@MainActivity)
+            return JSONObject()
+                .put("current", "symbiosis")
+                .put("preferExternal", settings.bool("preferExternal", false))
+                .put("official", JSONObject().put("installed", ext != null).put("package", ext ?: "").put("label", if (ext != null) "Kenji-NX" else ""))
+                .put("kenjiCore", coreState())
+                .put("items", JSONArray()
+                    .put(JSONObject().put("id", "symbiosis").put("label", "Kenji Space").put("selected", true).put("ready", true))
+                    .put(JSONObject().put("id", "kenji").put("label", "Их Kenji").put("selected", false).put("ready", ext != null)))
+                .toString()
+        }
+        @JavascriptInterface fun selectSpace(id: String): String {
+            if (id == "kenji") {
+                val r = OfficialKenji.open(this@MainActivity, "")
+                return r
+            }
+            return JSONObject().put("ok", true).put("id", "symbiosis").put("message", "Kenji Space").toString()
+        }
+        @JavascriptInterface fun installKenjiShell(): String =
+            JSONObject().put("ok", true).put("message", "оболочка уже эта").toString()
+        @JavascriptInterface fun setPreferExternal(on: Boolean): String = settings.setBool("preferExternal", on)
+        @JavascriptInterface fun openOfficialKenji(path: String): String = OfficialKenji.open(this@MainActivity, path)
+        @JavascriptInterface fun engines(): String {
             val st = EngineLoader.state(this@MainActivity, EngineLoader.Engine.KENJI)
-            val state = when (st) {
-                is EngineLoader.State.Ready -> "ready"
-                is EngineLoader.State.Missing -> "missing"
-                is EngineLoader.State.Broken -> "broken"
-                is EngineLoader.State.Builtin -> "builtin"
-            }
-            val note = when (st) {
-                is EngineLoader.State.Ready -> "скачан · ${st.bytes / 1048576} МБ"
-                is EngineLoader.State.Missing -> "не скачан · ${(EngineLoader.KNOWN_SIZE[EngineLoader.Engine.KENJI] ?: 0L) / 1048576} МБ"
-                is EngineLoader.State.Broken -> st.reason
-                else -> ""
-            }
-            return JSONObject().put("state", state).put("note", note).toString()
+            val ready = st is EngineLoader.State.Ready
+            return JSONObject()
+                .put("current", "kenji")
+                .put("currentLabel", "Kenji-NX")
+                .put("launch", "kenji")
+                .put("launchLabel", "Kenji-NX")
+                .put("items", JSONArray().put(
+                    JSONObject().put("id", "kenji").put("label", "Kenji-NX")
+                        .put("state", if (ready) "ready" else "missing")
+                        .put("usable", ready)
+                        .put("selected", true)
+                        .put("launches", ready)
+                        .put("note", if (ready) "скачан" else "скачайте ядро")
+                ))
+                .toString()
+        }
+        @JavascriptInterface fun selectEngine(id: String): String =
+            JSONObject().put("ok", true).put("id", "kenji").put("message", "ядро Kenji").toString()
+        @JavascriptInterface fun cycleCpu(): String {
+            val on = !settings.bool("useNce", false)
+            return settings.setBool("useNce", on)
+        }
+        @JavascriptInterface fun downloadEngine(id: String) { downloadCore() }
+        @JavascriptInterface fun probeEngine(id: String) {
+            val payload = JSONObject().put("ok", DataRoot.keysPresent())
+                .put("message", if (DataRoot.keysPresent()) "ключи на месте, ядро можно запускать" else "нет ключей — положите prod.keys")
+                .toString()
+            main.post { web.evaluateJavascript("try{if(typeof onEngineProbe==='function')onEngineProbe($payload)}catch(e){}", null) }
+        }
+        @JavascriptInterface fun removeEngine(id: String): String {
+            EngineLoader.remove(this@MainActivity, EngineLoader.Engine.KENJI)
+            return JSONObject().put("ok", true).put("message", "ядро удалено").toString()
         }
 
         @JavascriptInterface
@@ -105,12 +350,10 @@ class MainActivity : AppCompatActivity() {
             Thread({
                 val r = EngineDownloader.download(this@MainActivity, EngineLoader.Engine.KENJI) { done, total ->
                     val payload = JSONObject().put("done", done).put("total", total).toString()
-                    main.post {
-                        web.evaluateJavascript("try{onCoreProgress($payload)}catch(e){}", null)
-                    }
+                    main.post { web.evaluateJavascript("try{if(typeof onEngineProgress==='function')onEngineProgress($payload)}catch(e){}", null) }
                 }
                 val payload = JSONObject().put("ok", r.ok).put("message", r.message).toString()
-                main.post { web.evaluateJavascript("try{onCoreDone($payload)}catch(e){}", null) }
+                main.post { web.evaluateJavascript("try{if(typeof onEngineDone==='function')onEngineDone($payload)}catch(e){}", null) }
             }, "kenji-dl").start()
         }
 
@@ -118,19 +361,26 @@ class MainActivity : AppCompatActivity() {
         fun launch(path: String, title: String) {
             if (path.isBlank()) return
             main.post {
-                if (settings.bool("preferExternal", true)) {
+                if (settings.bool("preferExternal", false)) {
                     val handed = OfficialKenji.open(this@MainActivity, path)
-                    if (JSONObject(handed).optBoolean("ok")) {
-                        Toast.makeText(this@MainActivity, JSONObject(handed).optString("message"), Toast.LENGTH_SHORT).show()
-                        return@post
-                    }
+                    if (JSONObject(handed).optBoolean("ok")) return@post
                 }
                 val st = EngineLoader.state(this@MainActivity, EngineLoader.Engine.KENJI)
                 if (st !is EngineLoader.State.Ready) {
-                    Toast.makeText(this@MainActivity, "сначала скачайте ядро или поставьте их Kenji", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, "скачайте ядро: Ядра → Скачать", Toast.LENGTH_LONG).show()
+                    downloadCore()
                     return@post
                 }
                 startActivity(PlayerActivity.intent(this@MainActivity, path, title))
+            }
+        }
+
+        private fun coreState(): String {
+            val st = EngineLoader.state(this@MainActivity, EngineLoader.Engine.KENJI)
+            return when (st) {
+                is EngineLoader.State.Ready -> "ready"
+                is EngineLoader.State.Broken -> "broken"
+                else -> "missing"
             }
         }
     }
