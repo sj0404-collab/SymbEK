@@ -1607,10 +1607,11 @@ function loadSpaces() {
 }
 
 
-function openUtilitiesSheet() {
+function openUtilitiesSheet(note) {
   HOLD = null;
   const st = parse(call('status'), { items: [], dataRoot: '' });
   const roots = parse(call('suggestRoots'), { roots: [], current: '' });
+  const br = parse(call('firmwareBridge'), { kenjiReady: false, kenjiNcas: 0, sources: [] });
   const items = (st.items || []).map(it =>
     '<div class="logline"><div class="' + (it.present ? 'ok' : 'bad') + '">' + esc(it.label) + (it.present ? ' ✓' : ' ✕') + '</div>' +
     '<div class="wh">' + esc(it.detail || '') + '</div></div>'
@@ -1620,20 +1621,35 @@ function openUtilitiesSheet() {
     esc(r.path) + (r.keys ? ' · ключи' : '') + (r.kenji ? ' · Kenji' : '') + (r.eden ? ' · Eden' : '') +
     '</span></div></div>'
   ).join('');
+  const srcs = (br.sources || []).map(s =>
+    '<div class="logline"><div class="ok">Eden · ' + esc(s.label) + ' · ' + s.ncas + ' NCA</div>' +
+    '<div class="wh">' + esc(s.path) + '</div></div>'
+  ).join('');
   $('sheet-title').textContent = 'Утилиты Kenji';
   $('sheet-note').innerHTML =
-    '<div class="note">Папка данных — прошивка и ключи. Папка игр — NSP, та же что в Symbiosis. Ядро вшито (~54 МБ).</div>' +
+    '<div class="note">Папки разные: Eden = nand/.../registered/*.nca, Kenji = bis/.../registered/{id}.nca/00. Мост раскладывает те же файлы, ядро не меняется.</div>' +
     items +
+    '<div style="margin-top:10px;font-weight:600">Мост Eden → Kenji</div>' +
+    '<div class="note">Kenji bis: ' + (br.kenjiNcas || 0) + ' NCA' + (br.kenjiReady ? ' · готово' : ' · пусто') + '</div>' +
+    (srcs || '<div class="note">распакованную прошивку Eden пока не вижу</div>') +
+    (note ? '<div class="logline"><div class="ok">' + esc(note) + '</div></div>' : '') +
     '<div style="margin-top:10px;font-weight:600">Корень данных</div>' +
     '<div class="note">' + esc(roots.current || st.dataRoot || '') + '</div>' + sug;
   $('sheet-actions').innerHTML =
+    '<button class="ghost" id="u-bridge">Мост Eden</button>' +
     '<button class="ghost" id="u-data">Папка данных</button>' +
     '<button class="ghost" id="u-keys">Ключи prod.keys</button>' +
-    '<button class="ghost" id="u-fw">Прошивка</button>' +
+    '<button class="ghost" id="u-fw">Прошивка zip/xci</button>' +
     '<button class="ghost" id="u-games">Папка игр</button>' +
     '<button class="ghost" id="u-saves">Сейвы</button>' +
     '<button class="ghost" id="u-crash">Отчёт</button>' +
     '<button class="ghost" id="u-close">Закрыть</button>';
+  $('u-bridge').onclick = () => {
+    $('sheet-note').innerHTML = '<div class="note">раскладываю NCA в bis/… если ссылки не выйдут — будет копия, подождите</div>';
+    const r = parse(call('bridgeFirmware'), { message: 'нет моста' });
+    loadStatus();
+    openUtilitiesSheet(r.message || '');
+  };
   $('u-data').onclick = () => { if (N() && N().pickDataRoot) N().pickDataRoot(); };
   $('u-keys').onclick = () => { if (N() && N().pickKeys) N().pickKeys(); };
   $('u-fw').onclick = () => { if (N() && N().pickFirmware) N().pickFirmware(); };

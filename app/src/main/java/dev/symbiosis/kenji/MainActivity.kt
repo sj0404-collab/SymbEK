@@ -187,6 +187,12 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface fun cycleMemMode(): String = settings.cycleMemMode()
         @JavascriptInterface fun pickKeys() { main.post { pickKeys.launch(arrayOf("*/*")) } }
         @JavascriptInterface fun pickFirmware() { main.post { pickFirmware.launch(arrayOf("*/*")) } }
+        @JavascriptInterface fun firmwareBridge(): String = FirmwareBridge.statusJson()
+        @JavascriptInterface fun bridgeFirmware(): String = try {
+            FirmwareBridge.auto(DataRoot.kenjiHome(), allowCopy = true).toString()
+        } catch (t: Throwable) {
+            JSONObject().put("ok", false).put("message", t.message ?: "мост упал").toString()
+        }
         @JavascriptInterface fun folders(): String = folders.json()
         @JavascriptInterface fun games(): String = folders.gamesJson()
         @JavascriptInterface fun pickFolder() { main.post { pickFolder.launch(null) } }

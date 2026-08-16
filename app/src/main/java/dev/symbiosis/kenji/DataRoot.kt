@@ -70,6 +70,8 @@ object DataRoot {
             File(root, it).mkdirs()
         }
         seedKeysIntoKenji(root)
+        // If bis/ is empty, pull Eden's registered NCAs into Kenji layout.
+        if (!FirmwareBridge.kenjiReady(root)) FirmwareBridge.auto(root)
     }
 
     /** Copy prod.keys / title.keys from Eden-style or Kenji-style locations. */
@@ -102,6 +104,7 @@ object DataRoot {
 
     fun firmwarePresent(): Boolean {
         val root = File(resolve())
+        if (FirmwareBridge.kenjiReady(root)) return true
         val kenjiBis = File(root, "bis")
         if (kenjiBis.isDirectory && (kenjiBis.listFiles()?.isNotEmpty() == true)) return true
         val edenFw = File(root, "nand/system/Contents/registered")
@@ -110,11 +113,13 @@ object DataRoot {
 
     fun firmwareNote(): String {
         val root = File(resolve())
-        val bis = File(root, "bis")
-        if (bis.isDirectory && (bis.listFiles()?.isNotEmpty() == true))
-            return "прошивка Kenji в bis/"
+        val nKenji = FirmwareBridge.kenjiNcaCount(root)
+        if (nKenji >= 10) return "прошивка Kenji в bis/ · $nKenji NCA"
+        val src = FirmwareBridge.bestSource()
+        if (src != null)
+            return "нашёл Eden (${src.label}, ${src.ncas} NCA). Kenji читает bis/{id}.nca/00 — нажмите «Мост Eden» или она подтянется сама."
         val n = File(root, "nand/system/Contents/registered").listFiles()?.size ?: 0
-        if (n > 10) return "это папка Eden: $n файлов прошивки. Kenji её так не читает — поставьте прошивку один раз в эту же папку через «Прошивка» или укажите папку официального Kenji (там уже bis/)."
+        if (n > 10) return "это папка Eden: $n файлов. Мост ещё не разложил их в bis/."
         return "прошивки нет"
     }
 

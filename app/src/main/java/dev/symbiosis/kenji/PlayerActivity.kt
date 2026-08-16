@@ -93,13 +93,16 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
 
     private fun boot(holder: SurfaceHolder, fd: Int, path: String, w: Int, h: Int) {
         val core = Kenji.core
-        val data = DataRoot.kenjiHome().absolutePath
-        DataRoot.ensureKenjiLayout(DataRoot.kenjiHome())
+        val home = DataRoot.kenjiHome()
+        DataRoot.ensureKenjiLayout(home)
+        if (!FirmwareBridge.kenjiReady(home)) FirmwareBridge.auto(home, allowCopy = true)
+        val data = home.absolutePath
         val s = SettingsStore(this)
 
         if (!core.javaInitialize(data, JNIEnv.CURRENT)) {
             throw IllegalStateException("javaInitialize отказал (ключи/прошивка?)")
         }
+        installPendingFirmware(core)
         core.loggingSetEnabled(3, true) // Error
         core.loggingSetEnabled(2, true) // Warning
         if (!core.deviceInitialize(
@@ -180,6 +183,21 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         status.text = msg
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
         status.postDelayed({ finish() }, 4000)
+    }
+
+    private fun installPendingFirmware(core: org.kenjinx.android.KenjinxCore) {
+        val pending = SettingsStore(this).string("pendingFirmware")
+        if (pending.isBlank()) return
+        val file = File(pending)
+        if (!file.isFile || file.length() < 1000) return
+        val isXci = file.extension.equals("xci", true)
+        val p = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        try {
+            core.deviceInstallFirmware(p.fd, isXci)
+            SettingsStore(this).setString("pendingFirmware", "")
+        } finally {
+            runCatching { p.close() }
+        }
     }
 
     private fun openRom(path: String): ParcelFileDescriptor? = runCatching {

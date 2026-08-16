@@ -47,6 +47,9 @@ interface KenjinxCore : Library {
     fun deviceCloseEmulation()
     fun deviceSignalEmulationClose()
     fun loggingSetEnabled(logLevel: Int, enabled: Boolean)
+    fun deviceInstallFirmware(fileDescriptor: Int, isXci: Boolean)
+    fun deviceVerifyFirmware(fileDescriptor: Int, isXci: Boolean): String
+    fun deviceGetInstalledFirmwareVersion(): String
 }
 
 object Kenji {
