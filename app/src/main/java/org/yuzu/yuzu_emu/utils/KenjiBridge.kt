@@ -125,11 +125,12 @@ object KenjiBridge {
             else -> Unit
         }
 
-        val file = EngineLoader.coreFile(context, EngineLoader.Engine.KENJI)
+        val packaged = EngineLoader.packagedCore(context, EngineLoader.Engine.KENJI)
+        val file = packaged ?: EngineLoader.coreFile(context, EngineLoader.Engine.KENJI)
 
-        // Read-only before the load, or Android 14+ refuses outright with
-        // "Attempt to load writable file".
-        if (!EngineLoader.markReadOnly(file)) {
+        // APK-extracted libs are already read-only. A downloaded copy must
+        // be sealed or Android 14+ refuses dlopen.
+        if (packaged == null && !EngineLoader.markReadOnly(file)) {
             return Status(false, "не удалось закрыть файл ядра от записи")
         }
 

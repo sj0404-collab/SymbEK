@@ -67,7 +67,20 @@ object EngineLoader {
         File(context.filesDir, "engines").apply { mkdirs() }
 
     fun coreFile(context: Context, engine: Engine) =
-        File(coreDir(context), "lib${engine.id}.so")
+        packagedCore(context, engine) ?: File(coreDir(context), "lib${engine.id}.so")
+
+    /**
+     * Core shipped inside the APK (jniLibs). Official Kenji names it
+     * libkenjinx.so; we also accept libkenji.so. Packaged libs are
+     * already read-only — Android 14 will load them.
+     */
+    fun packagedCore(context: Context, engine: Engine): File? {
+        if (engine != Engine.KENJI) return null
+        val dir = context.applicationInfo.nativeLibraryDir ?: return null
+        return listOf("libkenjinx.so", "libkenji.so")
+            .map { File(dir, it) }
+            .firstOrNull { it.isFile && it.length() > 1_000_000L }
+    }
 
     /**
      * The core's SHA-256, pinned at build time.
@@ -86,6 +99,7 @@ object EngineLoader {
 
     fun state(context: Context, engine: Engine): State {
         if (engine == Engine.EDEN) return State.Builtin
+        packagedCore(context, engine)?.let { return State.Ready(it.absolutePath, it.length()) }
 
         val file = coreFile(context, engine)
         if (!file.exists()) return State.Missing(KNOWN_SIZE[engine] ?: 0L)

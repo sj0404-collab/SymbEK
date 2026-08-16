@@ -38,6 +38,11 @@ android {
         cmake { path = file("src/main/cpp/CMakeLists.txt") }
     }
     buildFeatures { buildConfig = true }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 dependencies {

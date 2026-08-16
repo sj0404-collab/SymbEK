@@ -30,6 +30,21 @@ jobs:
       - name: NDK and CMake
         run: |
           yes | sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1" || true
+      - name: Embed Kenji core
+        run: |
+          # Official name is libkenjinx.so. Same file we already built
+          # (engine-kenji). Shipping it in jniLibs means the player does
+          # not depend on a download that can be missing or still writable.
+          set -euo pipefail
+          DEST=app/src/main/jniLibs/arm64-v8a
+          mkdir -p "$DEST"
+          URL=https://github.com/sj0404-collab/eden-symbiosis/releases/download/engine-kenji/libkenji.so
+          WANT=969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8
+          curl -fL --retry 3 -o "$DEST/libkenjinx.so" "$URL"
+          GOT=$(sha256sum "$DEST/libkenjinx.so" | awk '{print $1}')
+          echo "core sha256 $GOT"
+          test "$GOT" = "$WANT"
+          ls -lh "$DEST"
       - name: Build
         run: |
           TYPE=${{ github.event.inputs.build_type || 'release' }}
