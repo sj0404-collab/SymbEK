@@ -12,7 +12,7 @@
 * `enableTraceLogs` читает ключ `enableStubLogs` (копипаста);
 * `CrashHandler` пишет в `MainActivity.AppPath`, который на сплэше ещё пустой.
 
-Здесь это починено. Лаунчер и настройки — PWA (HTML), как в Symbiosis, но сетка и цвета Kenji. Ядро скачивается (~55 МБ), в APK его нет.
+Здесь это починено. Лаунчер и настройки — PWA (HTML), как в Symbiosis. Ядро вшито в APK как libkenjinx.so.
 
 ## Что умеет
 

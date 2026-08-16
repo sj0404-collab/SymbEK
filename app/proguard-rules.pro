@@ -1,5 +1,10 @@
 -keep class org.yuzu.yuzu_emu.utils.KenjiBridge { *; }
 -keep class org.kenjinx.android.KenjinxNative { *; }
+-keep class org.kenjinx.android.KenjinxCore { *; }
+-keep class org.kenjinx.android.Kenji { *; }
+-keep class org.kenjinx.android.NativeHelpers { *; }
+-keep class com.sun.jna.** { *; }
+-keepclassmembers class * extends com.sun.jna.** { *; }
 -keep class dev.symbiosis.kenji.** { *; }
 -keepclasseswithmembernames class * { native <methods>; }
 -keepattributes SourceFile,LineNumberTable

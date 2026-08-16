@@ -15,9 +15,16 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
+import com.sun.jna.JNIEnv
 import java.io.File
-import org.yuzu.yuzu_emu.utils.KenjiBridge
+import org.kenjinx.android.Kenji
+import org.kenjinx.android.KenjinxNative
+import org.kenjinx.android.NativeHelpers
 
+/**
+ * Real Kenji player: official JNA + official kenjinxjni + packaged libkenjinx.so.
+ * Isolated in :player so a native abort does not kill the launcher.
+ */
 class PlayerActivity : Activity(), SurfaceHolder.Callback {
 
     companion object {
@@ -40,7 +47,13 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         val surface = SurfaceView(this)
         surface.holder.addCallback(this)
-        root.addView(surface, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        root.addView(
+            surface,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
         status = TextView(this).apply {
             text = "Kenji Space\n$title"
             setTextColor(Color.WHITE)
@@ -58,7 +71,7 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         )
         setContentView(root)
         if (path.isBlank()) return fail("нет пути")
-        pfd = openRom(path) ?: return fail("не открылся файл")
+        pfd = openRom(path) ?: return fail("не открылся файл игры")
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -69,45 +82,108 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         val h = holder.surfaceFrame.height().coerceAtLeast(128)
         started = true
         loop = Thread({
-            val nw = KenjiBridge.nativeWindow(holder.surface)
-            org.kenjinx.android.KenjinxNative.nativeSurface = nw
-            org.kenjinx.android.KenjinxNative.nativeWindow = nw
-            val prep = KenjiBridge.preparePlay(this)
-            if (!prep.ok) { runOnUiThread { fail(prep.message) }; return@Thread }
-            val surf = KenjiBridge.attachSurface(holder.surface, w, h)
-            if (!surf.ok) { runOnUiThread { fail(surf.message) }; return@Thread }
-            val load = KenjiBridge.loadGame(fd, KenjiBridge.fileTypeOf(path))
-            if (!load.ok) { runOnUiThread { fail(load.message) }; return@Thread }
-            runOnUiThread { status.text = "Kenji Space · играет" }
-            KenjiBridge.runLoop()
+            val err = runCatching { boot(holder, fd, path, w, h) }.exceptionOrNull()
+            if (err != null) {
+                runOnUiThread { fail("ядро: ${err.message ?: err.javaClass.simpleName}") }
+                return@Thread
+            }
             runOnUiThread { leave() }
         }, "kenji-loop").also { it.start() }
     }
 
+    private fun boot(holder: SurfaceHolder, fd: Int, path: String, w: Int, h: Int) {
+        val core = Kenji.core
+        val data = DataRoot.kenjiHome().absolutePath
+        DataRoot.ensureKenjiLayout(DataRoot.kenjiHome())
+        val s = SettingsStore(this)
+
+        if (!core.javaInitialize(data, JNIEnv.CURRENT)) {
+            throw IllegalStateException("javaInitialize отказал (ключи/прошивка?)")
+        }
+        core.loggingSetEnabled(3, true) // Error
+        core.loggingSetEnabled(2, true) // Warning
+        if (!core.deviceInitialize(
+                s.int("memoryManagerMode", 2),
+                s.bool("useNce", false),
+                s.int("memoryConfiguration", 0),
+                1, 1, 0,
+                s.bool("enableDocked", false),
+                s.bool("enablePptc", true),
+                s.bool("enableLowPowerPptc", false),
+                s.bool("enableJitCacheEviction", false),
+                false,
+                s.bool("enableFsIntegrityChecks", false),
+                0,
+                "UTC",
+                s.bool("ignoreMissingServices", false)
+            )
+        ) throw IllegalStateException("deviceInitialize отказал")
+
+        if (!core.graphicsInitialize(
+                1f, 0f, true, true, false,
+                s.bool("enableMacroHLE", true),
+                s.bool("enableShaderCache", true),
+                s.bool("enableTextureRecompression", false),
+                s.int("backendThreading", 1)
+            )
+        ) throw IllegalStateException("graphicsInitialize отказал")
+
+        val nw = NativeHelpers.instance.getNativeWindow(holder.surface)
+        KenjinxNative.nativeSurface = nw
+        KenjinxNative.nativeWindow = nw
+        core.inputInitialize(w, h)
+        val exts = arrayOf("VK_KHR_surface", "VK_KHR_android_surface")
+        if (!core.graphicsInitializeRenderer(exts, exts.size, 0L)) {
+            throw IllegalStateException("graphicsInitializeRenderer отказал")
+        }
+        core.graphicsRendererSetSize(w, h)
+
+        val type = when (path.substringAfterLast('.', "").lowercase().substringBefore('?')) {
+            "xci", "xcz" -> 2
+            "nro" -> 3
+            else -> 1
+        }
+        if (!core.deviceLoadDescriptor(fd, type, -1)) {
+            throw IllegalStateException("не открыл игру (проверьте ключи и прошивку в папке данных)")
+        }
+        runOnUiThread { status.text = "Kenji · играет" }
+        core.graphicsRendererRunLoop()
+    }
+
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
-    override fun surfaceDestroyed(holder: SurfaceHolder) { KenjiBridge.stopPlay() }
+
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
+        runCatching { Kenji.core.deviceSignalEmulationClose() }
+        runCatching { Kenji.core.deviceCloseEmulation() }
+    }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() { leave() }
 
     override fun onDestroy() {
-        KenjiBridge.stopPlay()
+        runCatching { Kenji.core.deviceSignalEmulationClose() }
+        runCatching { Kenji.core.deviceCloseEmulation() }
         loop?.join(1500)
-        KenjiBridge.unload()
         runCatching { pfd?.close() }
         super.onDestroy()
     }
 
-    private fun leave() { KenjiBridge.stopPlay(); finish() }
+    private fun leave() {
+        runCatching { Kenji.core.deviceSignalEmulationClose() }
+        finish()
+    }
 
     private fun fail(msg: String) {
         status.text = msg
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
-        status.postDelayed({ finish() }, 2400)
+        status.postDelayed({ finish() }, 4000)
     }
 
     private fun openRom(path: String): ParcelFileDescriptor? = runCatching {
-        if (path.startsWith("/")) ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_ONLY)
-        else contentResolver.openFileDescriptor(Uri.parse(path), "r")
+        if (path.startsWith("/")) {
+            ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_ONLY)
+        } else {
+            contentResolver.openFileDescriptor(Uri.parse(path), "r")
+        }
     }.getOrNull()
 }
