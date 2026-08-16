@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.22)
+project(kenji_space)
+add_library(symbiosis_kenji SHARED kenji_bridge.cpp)
+target_link_libraries(symbiosis_kenji PRIVATE log dl android)
+add_library(kenjinxjni SHARED kenji_bridge.cpp)
+target_link_libraries(kenjinxjni PRIVATE log dl android)
