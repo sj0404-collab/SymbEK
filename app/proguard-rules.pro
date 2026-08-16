@@ -5,6 +5,8 @@
 -keep class org.kenjinx.android.NativeHelpers { *; }
 -keep class com.sun.jna.** { *; }
 -keepclassmembers class * extends com.sun.jna.** { *; }
+-dontwarn java.awt.**
+-dontwarn javax.swing.**
 -keep class dev.symbiosis.kenji.** { *; }
 -keepclasseswithmembernames class * { native <methods>; }
 -keepattributes SourceFile,LineNumberTable
