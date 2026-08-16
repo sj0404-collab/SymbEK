@@ -398,7 +398,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val pickConvert = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+    private val pickConvertFiles = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNullOrEmpty()) return@registerForActivityResult
         uris.forEach { Inbox.import(this, it) }
         web.evaluateJavascript(
