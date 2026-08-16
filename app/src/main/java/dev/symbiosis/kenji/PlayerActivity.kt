@@ -96,12 +96,46 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         val home = DataRoot.kenjiHome()
         DataRoot.ensureKenjiLayout(home)
         if (!FirmwareBridge.kenjiReady(home)) FirmwareBridge.auto(home, allowCopy = true)
+        DataRoot.seedKeysIntoKenji(home)
+        File(home, "Logs").mkdirs()
+        if (!DataRoot.kenjiKeysReady(home)) {
+            val eden = File(home, "keys/prod.keys")
+            throw IllegalStateException(
+                "Kenji читает только ${File(home, "system/prod.keys").absolutePath}. " +
+                    if (eden.isFile) "ключи лежат в keys/, скопировать в system/ не вышло"
+                    else "нет prod.keys"
+            )
+        }
         val data = home.absolutePath
         val s = SettingsStore(this)
 
-        if (!core.javaInitialize(data, JNIEnv.CURRENT)) {
-            throw IllegalStateException("javaInitialize отказал (ключи/прошивка?)")
+        org.kenjinx.android.MainActivity.attachVm()
+        val registered = FirmwareBridge.kenjiRegistered(home)
+        val stashed = File(registered.parentFile, "registered.stash")
+        val hadFw = FirmwareBridge.kenjiReady(home)
+        // SwitchDevice ctor parses every NCA. A single bad file → javaInitialize
+        // false, and VirtualFileSystem then cannot be created again in this process.
+        if (hadFw && registered.isDirectory) {
+            if (stashed.exists()) stashed.deleteRecursively()
+            registered.renameTo(stashed)
         }
+        val inited = try {
+            core.javaInitialize(data, JNIEnv.CURRENT)
+        } finally {
+            if (stashed.isDirectory) {
+                if (registered.exists()) registered.deleteRecursively()
+                stashed.renameTo(registered)
+            }
+        }
+        if (!inited) {
+            val log = lastKenjiLog(home)
+            throw IllegalStateException(
+                "javaInitialize отказал. ключи=${DataRoot.kenjiKeysFile(home).length()}Б " +
+                    "NCA=${FirmwareBridge.kenjiNcaCount(home)} путь=$data" +
+                    if (log.isNotBlank()) " · лог: $log" else " · Logs/ пуст"
+            )
+        }
+        runCatching { core.deviceReloadFilesystem() }
         installPendingFirmware(core)
         core.loggingSetEnabled(3, true) // Error
         core.loggingSetEnabled(2, true) // Warning
@@ -179,10 +213,18 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         finish()
     }
 
+    private fun lastKenjiLog(home: File): String {
+        val dir = File(home, "Logs")
+        val f = dir.listFiles()?.filter { it.isFile }?.maxByOrNull { it.lastModified() }
+            ?: return ""
+        return runCatching { f.readText().takeLast(500) }.getOrDefault("")
+            .replace('\n', ' ').trim()
+    }
+
     private fun fail(msg: String) {
         status.text = msg
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
-        status.postDelayed({ finish() }, 4000)
+        status.postDelayed({ finish() }, 8000)
     }
 
     private fun installPendingFirmware(core: org.kenjinx.android.KenjinxCore) {

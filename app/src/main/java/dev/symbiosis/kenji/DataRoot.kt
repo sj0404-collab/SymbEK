@@ -89,18 +89,31 @@ object DataRoot {
                 ?: return@forEach
             dests.forEach { d ->
                 val t = File(d, name)
-                if (!t.isFile || t.length() != found.length()) {
-                    runCatching { found.copyTo(t, overwrite = true) }
+                if (t.isFile && t.length() == found.length()) return@forEach
+                if (t.exists() && !t.isFile) t.deleteRecursively()
+                if (!copyKey(found, t)) {
+                    android.util.Log.e("KenjiSpace", "не скопировал $name → ${t.absolutePath}")
                 }
             }
         }
     }
 
-    fun keysPresent(): Boolean {
-        val root = File(resolve())
-        return listOf("system/prod.keys", "keys/prod.keys")
-            .any { File(root, it).let { f -> f.isFile && f.length() > 100 } }
+    private fun copyKey(from: File, to: File): Boolean {
+        to.parentFile?.mkdirs()
+        return runCatching {
+            from.inputStream().use { input -> to.outputStream().use { input.copyTo(it) } }
+            to.isFile && to.length() == from.length()
+        }.getOrDefault(false)
     }
+
+    /** Kenji ReloadKeySet reads only system/prod.keys, not keys/. */
+    fun kenjiKeysFile(root: File = File(resolve())): File = File(root, "system/prod.keys")
+
+    fun keysPresent(): Boolean = kenjiKeysFile().let { it.isFile && it.length() > 100 } ||
+        File(resolve(), "keys/prod.keys").let { it.isFile && it.length() > 100 }
+
+    fun kenjiKeysReady(root: File = File(resolve())): Boolean =
+        kenjiKeysFile(root).let { it.isFile && it.length() > 100 }
 
     fun firmwarePresent(): Boolean {
         val root = File(resolve())
@@ -194,7 +207,19 @@ object DataRoot {
     fun statusItems(): JSONArray {
         val root = File(resolve())
         val items = JSONArray()
-        items.put(item("Ключи", keysPresent(), if (keysPresent()) "prod.keys" else "нет prod.keys"))
+        val kenjiKeys = kenjiKeysReady()
+        val edenKeys = File(root, "keys/prod.keys").let { it.isFile && it.length() > 100 }
+        items.put(
+            item(
+                "Ключи",
+                kenjiKeys || edenKeys,
+                when {
+                    kenjiKeys -> "system/prod.keys · Kenji видит"
+                    edenKeys -> "только keys/prod.keys · Kenji это не читает, копирую в system/"
+                    else -> "нет prod.keys"
+                }
+            )
+        )
         items.put(item("Прошивка", firmwarePresent(), firmwareNote()))
         items.put(item("Папка данных", root.isDirectory, root.absolutePath))
         return items
