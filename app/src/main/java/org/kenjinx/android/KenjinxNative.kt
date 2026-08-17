@@ -82,8 +82,14 @@ object KenjinxNative {
             .filter { it.isNotBlank() }
             .joinToString(" · ")
         if (combined.isNotBlank()) runCatching { uiMessageListener?.invoke(combined) }
-        if (title.isNotBlank() || message.isNotBlank() || initialText.isNotBlank()) {
-            runCatching { keyboardListener?.invoke(title, message, initialText, newType, min, max) }
+        // Always deliver the handler request. The core blocks LoadApplication
+        // until uiHandlerSetResponse. Dropping type=0 / empty strings hung
+        // the player on «загрузка игры» with no dialog and no FPS.
+        val listener = keyboardListener
+        if (listener != null) {
+            runCatching { listener.invoke(title, message, initialText, newType, min, max) }
+        } else {
+            Log.w(TAG, "UI callback with no listener type=$newType")
         }
 
         Log.d(TAG, "UI callback type=$newType range=$min..$max mode=$nMode")

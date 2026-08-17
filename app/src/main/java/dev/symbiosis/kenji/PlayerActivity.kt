@@ -311,18 +311,21 @@ class PlayerActivity : Activity() {
             )
         }
         // Install the real Android UI handler before the game can request a
-        // software keyboard or confirmation dialog.
+        // software keyboard or confirmation dialog. The loader itself can
+        // block on updateUiHandler until we call uiHandlerSetResponse.
         core.uiHandlerSetup()
+        installCallbacks()
 
-        val type = when (path.substringAfterLast('.', "").lowercase().substringBefore('?')) {
-            "xci" -> 2
-            "nro" -> 3
-            "nsp" -> 1
-            else -> throw IllegalArgumentException("сжатый или неподдерживаемый формат: ${path.substringAfterLast('.')}")
-        }
-        progressText = "загрузка игры"
+        val type = romType(path)
+        progressText = "загрузка игры…"
         updateHud()
-        if (!core.deviceLoadDescriptor(fd, type, -1)) {
+        val loadWatch = startLoadWatch()
+        val loaded = try {
+            core.deviceLoadDescriptor(fd, type, -1)
+        } finally {
+            loadWatch.set(false)
+        }
+        if (!loaded) {
             throw IllegalStateException("ядро не открыло игру: проверьте ключи и прошивку")
         }
 
@@ -348,7 +351,6 @@ class PlayerActivity : Activity() {
         playing = true
         firmwareInfo = firmwareVersion(core, home)
         progressText = if (port >= 0) "шейдеры инициализируются" else "геймпад не подключился; touch доступен"
-        installCallbacks()
         startInputPump(core)
         startStatsPump(core)
         core.graphicsSetPresentEnabled(true)
@@ -402,25 +404,9 @@ class PlayerActivity : Activity() {
         }
 
         val data = home.absolutePath
-        val registered = FirmwareBridge.kenjiRegistered(home)
-        val stashed = File(registered.parentFile, "registered.stash")
-        if (FirmwareBridge.kenjiReady(home) && registered.isDirectory) {
-            if (stashed.exists()) stashed.deleteRecursively()
-            if (!registered.renameTo(stashed)) {
-                throw IllegalStateException("не удалось временно убрать прошивку перед javaInitialize")
-            }
-        }
-
-        val initialized = try {
-            core.javaInitialize(data, JNIEnv.CURRENT)
-        } finally {
-            if (stashed.isDirectory) {
-                if (registered.exists()) registered.deleteRecursively()
-                if (!stashed.renameTo(registered)) {
-                    throw IllegalStateException("не удалось вернуть прошивку после javaInitialize")
-                }
-            }
-        }
+        // Do not hide firmware during init: ReloadFilesystem after a stash
+        // can leave ContentManager empty and LoadApplication never returns.
+        val initialized = core.javaInitialize(data, JNIEnv.CURRENT)
         if (!initialized) {
             val log = lastKenjiLog(home)
             throw IllegalStateException(
@@ -481,9 +467,16 @@ class PlayerActivity : Activity() {
             }
         }
         KenjinxNative.keyboardListener = { title, message, initial, type, min, max ->
-            if (type > 0) {
+            // Types 1/2 are software keyboards. Everything else is a
+            // blocking message/confirm: the loader waits on this thread
+            // until uiHandlerSetResponse. Swallowing it freezes on
+            // «загрузка игры» with no FPS and no crash.
+            if (type == 1 || type == 2) {
                 runOnUiThread {
-                    if (shuttingDown.get() || isFinishing) return@runOnUiThread
+                    if (shuttingDown.get() || isFinishing) {
+                        runCatching { Kenji.core.uiHandlerSetResponse(false, "") }
+                        return@runOnUiThread
+                    }
                     if (keyboardDialog?.isShowing == true) return@runOnUiThread
 
                     val input = EditText(this).apply {
@@ -518,6 +511,11 @@ class PlayerActivity : Activity() {
                     keyboardDialog = dialog
                     dialog.show()
                 }
+            } else {
+                progressText = listOf(title, message).filter { it.isNotBlank() }.joinToString(" · ")
+                    .ifBlank { "запрос ядра type=$type" }
+                updateHud()
+                runCatching { Kenji.core.uiHandlerSetResponse(true, initial) }
             }
         }
     }
@@ -884,6 +882,28 @@ class PlayerActivity : Activity() {
             ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_ONLY)
         } else {
             contentResolver.openFileDescriptor(Uri.parse(path), "r")
+        }
+    }.getOrNull()
+}
+                 updateHud()
+                }
+            }
+        }, "kenji-load-watch").start()
+        return running
+    }
+
+    private fun openRom(path: String): ParcelFileDescriptor? = runCatching {
+        // Official FileStream opens the descriptor ReadWrite. A read-only
+        // fd makes the .NET host block inside deviceLoadDescriptor.
+        if (path.startsWith("/")) {
+            ParcelFileDescriptor.open(
+                File(path),
+                ParcelFileDescriptor.MODE_READ_WRITE
+            )
+        } else {
+            val uri = Uri.parse(path)
+            contentResolver.openFileDescriptor(uri, "rw")
+                ?: contentResolver.openFileDescriptor(uri, "r")
         }
     }.getOrNull()
 }
