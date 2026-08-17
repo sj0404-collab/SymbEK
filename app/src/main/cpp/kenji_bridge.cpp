@@ -59,7 +59,9 @@ Java_org_kenjinx_android_NativeHelpers_getNativeWindowSafe(JNIEnv* env, jobject,
 
 JNIEXPORT void JNICALL
 Java_org_kenjinx_android_NativeHelpers_releaseNativeWindowSafe(JNIEnv*, jobject, jlong handle) {
-    if (handle > 0) {
+    // A NativeWindow pointer may have PAC/MTE top bits set and look "negative"
+    // as a signed jlong. Only 0 and -1 mean "no window".
+    if (handle != 0 && handle != -1) {
         ANativeWindow_release(reinterpret_cast<ANativeWindow*>(handle));
     }
 }
