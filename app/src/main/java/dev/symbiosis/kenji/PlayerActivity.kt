@@ -10,9 +10,9 @@ import android.os.ParcelFileDescriptor
 import android.text.InputType
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.graphics.SurfaceTexture
 import android.view.Surface
-import android.view.SurfaceHolder
-import android.view.SurfaceView
+import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -63,8 +63,10 @@ class PlayerActivity : Activity() {
     private var nativeWindowHandle = NativePtr.NONE
     private var pendingNativeWindow = NativePtr.NONE
     private var gameSurface: Surface? = null
+    private var textureObject: SurfaceTexture? = null
     private var surfaceWidth = 0
     private var surfaceHeight = 0
+    private var ownsGameSurface = false
     private lateinit var status: TextView
     private var touchPad: TouchPad? = null
     private var keyboardDialog: android.app.AlertDialog? = null
@@ -89,26 +91,28 @@ class PlayerActivity : Activity() {
         val path = intent.getStringExtra("path").orEmpty()
 
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        // Official Kenji-NX uses SurfaceView + ANativeWindow_fromSurface.
-        // SurfaceView was a dead end: valid windows were
-        // rejected because PAC-tagged pointers look like negative Longs.
-        val surfaceView = SurfaceView(this)
-        surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) {
-                val frame = holder.surfaceFrame
-                onGameSurfaceReady(holder.surface, frame.width(), frame.height())
+        // TextureView composites under HUD/touch overlay. SurfaceView punches
+        // a separate window and on this Mali phone the game never shows
+        // through those overlays. Official Kenji has no overlay, so SurfaceView
+        // works there. Pointers must still accept PAC-tagged (negative) Longs.
+        val textureView = TextureView(this).apply {
+            isOpaque = true
+            surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+                    bindTexture(texture, width, height)
+                }
+                override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {
+                    bindTexture(texture, width, height)
+                }
+                override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                    onGameSurfaceDestroyed()
+                    return true
+                }
+                override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
             }
-
-            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-                onGameSurfaceSizeChanged(holder.surface, width, height)
-            }
-
-            override fun surfaceDestroyed(holder: SurfaceHolder) {
-                onGameSurfaceDestroyed()
-            }
-        })
+        }
         root.addView(
-            surfaceView,
+            textureView,
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -157,28 +161,29 @@ class PlayerActivity : Activity() {
         updateHud()
     }
 
-    private fun onGameSurfaceReady(surface: Surface, width: Int, height: Int) {
-        gameSurface = surface
-        surfaceWidth = width
-        surfaceHeight = height
+    private fun bindTexture(texture: SurfaceTexture, width: Int, height: Int) {
+        val w = width.coerceAtLeast(128)
+        val h = height.coerceAtLeast(128)
+        texture.setDefaultBufferSize(w, h)
+        if (ownsGameSurface) runCatching { gameSurface?.release() }
+        val created = Surface(texture)
+        ownsGameSurface = true
+        textureObject = texture
+        gameSurface = created
+        surfaceWidth = w
+        surfaceHeight = h
         surfaceReady = true
         releasePendingNativeWindow()
+        // Producer is attached only after this callback returns to the UI queue.
         status.post {
-            if (gameSurface !== surface || !surfaceReady || shuttingDown.get()) return@post
-            pendingNativeWindow = nativeWindowFromSurface(surface)
+            if (gameSurface !== created || !surfaceReady || shuttingDown.get()) return@post
+            pendingNativeWindow = nativeWindowFromTexture(texture) ?: nativeWindowFromSurface(created)
             if (started && rendererReady) {
-                rebindSurface(surface, surfaceWidth, surfaceHeight)
+                rebindSurface(created, w, h)
             } else if (!started && pfd != null) {
-                startBoot(surface, surfaceWidth.coerceAtLeast(128), surfaceHeight.coerceAtLeast(128))
+                startBoot(created, w, h)
             }
         }
-    }
-
-    private fun onGameSurfaceSizeChanged(surface: Surface, width: Int, height: Int) {
-        gameSurface = surface
-        surfaceWidth = width
-        surfaceHeight = height
-        if (rendererReady && !shuttingDown.get()) rebindSurface(surface, width, height)
     }
 
     private fun onGameSurfaceDestroyed() {
@@ -190,7 +195,10 @@ class PlayerActivity : Activity() {
             runCatching { Kenji.core.detachWindow() }
             releaseNativeWindow()
         }
+        if (ownsGameSurface) runCatching { gameSurface?.release() }
+        ownsGameSurface = false
         gameSurface = null
+        textureObject = null
         surfaceWidth = 0
         surfaceHeight = 0
     }
@@ -561,12 +569,21 @@ class PlayerActivity : Activity() {
         return official
     }
 
+    private fun nativeWindowFromTexture(texture: SurfaceTexture?): Long? {
+        if (texture == null) return null
+        val handle = runCatching {
+            NativeHelpers.instance.getNativeWindowFromTexture(texture)
+        }.getOrDefault(NativePtr.NONE)
+        lastTextureWindow = handle
+        return handle.takeIf { NativePtr.isSet(it) }
+    }
+
     private fun obtainNativeWindow(surface: Surface, timeoutMs: Long): Long {
         val attempts = (timeoutMs / 50L).toInt().coerceAtLeast(1)
         var last = NativePtr.NONE
         repeat(attempts) {
             if (surface.isValid) {
-                last = nativeWindowFromSurface(surface)
+                last = nativeWindowFromTexture(textureObject) ?: nativeWindowFromSurface(surface)
                 if (NativePtr.isSet(last)) return last
             }
             try {
@@ -676,7 +693,7 @@ class PlayerActivity : Activity() {
             progressText
         }
         val text = buildString {
-            append("Kenji Space ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · SurfaceView\n")
+            append("Kenji Space ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · TextureView\n")
             append(displayTitle)
             append('\n')
             append(dataSummary)
