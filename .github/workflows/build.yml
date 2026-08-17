@@ -152,7 +152,22 @@ jobs:
           cp "$APK" Kenji-Space.apk
           MD5=$(md5sum Kenji-Space.apk | cut -d' ' -f1)
           SIZE=$(stat -c%s Kenji-Space.apk)
-          gh release delete latest --yes || true
-          gh release create latest Kenji-Space.apk \
-            --title "Kenji Space ${KENJI_VERSION_NAME}" \
-            --notes "Версия ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). Подписано постоянным ключом — ставится поверх предыдущей без удаления. Ядро официального Kenji-NX 2.1.0-pr.2. MD5 ${MD5} · ${SIZE} байт"
+          # GitHub occasionally 503s on delete; create then fails with
+          # "tag already exists" and the APK is left only as an artifact.
+          for i in 1 2 3 4 5; do
+            gh release delete latest --yes && break || true
+            sleep $((i * 2))
+          done
+          git push origin :refs/tags/latest || true
+          for i in 1 2 3 4 5; do
+            if gh release create latest Kenji-Space.apk \
+              --title "Kenji Space ${KENJI_VERSION_NAME}" \
+              --notes "Версия ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). Подписано постоянным ключом — ставится поверх предыдущей без удаления. Ядро официального Kenji-NX 2.1.0-pr.2. MD5 ${MD5} · ${SIZE} байт"
+            then
+              exit 0
+            fi
+            echo "release create failed, try $i"
+            sleep $((i * 3))
+          done
+          echo "::error::не смог выложить latest после 5 попыток — APK в артефактах"
+          exit 1
