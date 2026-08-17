@@ -31,20 +31,55 @@ public final class FolderStore {
 
     public static List<GameItem> listGames(Context context) {
         LinkedHashSet<String> seen = new LinkedHashSet<String>();
-        List<GameItem> out = new ArrayList<GameItem>();
+        List<GameItem> raw = new ArrayList<GameItem>();
         for (String uri : allFolderUris(context)) {
             if (uri.startsWith("/")) {
-                collectFileDir(new File(uri), seen, out);
+                collectFileDir(new File(uri), seen, raw);
             } else {
-                collectTree(context, uri, seen, out);
+                collectTree(context, uri, seen, raw);
             }
         }
+        List<GameItem> out = mergeUpdates(raw);
         Collections.sort(out, new Comparator<GameItem>() {
             @Override public int compare(GameItem a, GameItem b) {
                 return a.title.compareToIgnoreCase(b.title);
             }
         });
         return out;
+    }
+
+    /** Hide standalone updates (titleId …800). Official Kenji loads them from the same folder. */
+    private static List<GameItem> mergeUpdates(List<GameItem> raw) {
+        LinkedHashSet<String> bases = new LinkedHashSet<String>();
+        for (GameItem g : raw) {
+            if (!g.update && g.titleId.length() == 16) bases.add(g.titleId);
+        }
+        List<GameItem> out = new ArrayList<GameItem>();
+        for (GameItem g : raw) {
+            if (g.update) {
+                String base = baseId(g.titleId);
+                if (bases.contains(base)) continue;
+                // no base in the folder — still don't launch it as a game
+                continue;
+            }
+            out.add(g);
+        }
+        return out;
+    }
+
+    public static boolean isUpdateId(String titleId) {
+        if (titleId == null || titleId.length() != 16) return false;
+        return titleId.toUpperCase(Locale.US).endsWith("800");
+    }
+
+    public static String baseId(String titleId) {
+        if (!isUpdateId(titleId)) return titleId == null ? "" : titleId;
+        try {
+            long v = Long.parseUnsignedLong(titleId, 16) - 0x800L;
+            return String.format(Locale.US, "%016X", v);
+        } catch (Exception e) {
+            return titleId;
+        }
     }
 
     public static void add(Context context, Uri uri) {
@@ -150,7 +185,8 @@ public final class FolderStore {
                 String path = (real != null && real.startsWith("/") && new File(real).isFile())
                         ? real : file.toString();
                 if (!seen.add(path)) continue;
-                out.add(new GameItem(prettyTitle(name), path, titleIdOf(name), human(size), name));
+                String tid = titleIdOf(name);
+                out.add(new GameItem(prettyTitle(name), path, tid, human(size), name, isUpdateId(tid), size));
             }
             c.close();
         } catch (Exception ignored) {
@@ -180,7 +216,11 @@ public final class FolderStore {
         if (name == null) return "игра";
         int dot = name.lastIndexOf('.');
         String stem = dot > 0 ? name.substring(0, dot) : name;
-        return stem.replace('_', ' ').trim();
+        stem = stem.replaceAll("(?i)\\[0100[0-9A-F]{12}]", "");
+        stem = stem.replaceAll("(?i)\\[v\\d+]", "");
+        stem = stem.replaceAll("\\([^)]*\\s*[Gg][Bb]\\)", "");
+        stem = stem.replace('_', ' ').replaceAll("\\s+", " ").trim();
+        return stem.isEmpty() ? name : stem;
     }
 
     static String titleIdOf(String name) {

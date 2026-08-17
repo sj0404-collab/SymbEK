@@ -63,6 +63,10 @@ public class LibraryActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         DataSeed.ensure(this);
+        if (!getSharedPreferences("kenji_space", MODE_PRIVATE).getBoolean("mali_applied", false)) {
+            SettingsBank.applyDefault(this);
+            getSharedPreferences("kenji_space", MODE_PRIVATE).edit().putBoolean("mali_applied", true).commit();
+        }
         askAllFiles();
         setContentView(buildUi());
         reload(false);
@@ -104,8 +108,10 @@ public class LibraryActivity extends Activity {
         title.setTypeface(Typeface.DEFAULT_BOLD);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
         head.addView(title, tp);
-        head.addView(pill("Их Kenji", false, new View.OnClickListener() {
-            @Override public void onClick(View v) { OfficialLaunch.home(LibraryActivity.this); }
+        head.addView(pill("Настройки", false, new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                startActivity(new Intent(LibraryActivity.this, SettingsActivity.class));
+            }
         }));
         root.addView(head);
 
@@ -131,7 +137,7 @@ public class LibraryActivity extends Activity {
 
         FrameLayout body = new FrameLayout(this);
         grid = new GridView(this);
-        grid.setNumColumns(3);
+        grid.setNumColumns(2);
         grid.setHorizontalSpacing(dp(8));
         grid.setVerticalSpacing(dp(8));
         grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
@@ -386,7 +392,7 @@ public class LibraryActivity extends Activity {
             setBackground(round(CARD, dp(10)));
             setPadding(dp(6), dp(6), dp(6), dp(8));
             int w = getResources().getDisplayMetrics().widthPixels;
-            int cell = (w - dp(40)) / 3;
+            int cell = (w - dp(36)) / 2;
             cover = new FrameLayout(a);
             art = new ImageView(a);
             art.setScaleType(ImageView.ScaleType.CENTER_CROP);

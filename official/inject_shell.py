@@ -47,6 +47,7 @@ activity = """
             </intent-filter>
         </activity>
         <activity android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|uiMode" android:exported="false" android:hardwareAccelerated="true" android:name="dev.symbiosis.kenji.GamePropsActivity" android:theme="@android:style/Theme.DeviceDefault.NoActionBar"/>
+        <activity android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|uiMode" android:exported="false" android:hardwareAccelerated="true" android:name="dev.symbiosis.kenji.SettingsActivity" android:theme="@android:style/Theme.DeviceDefault.NoActionBar"/>
 """
 idx = text.find(">", text.find("<application"))
 if idx < 0:
