@@ -53,8 +53,9 @@ public final class OfficialLaunch {
                 intent.setData(uri);
                 intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             }
-            // Official MainActivity must be task root — same as tapping the icon.
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            // :player is another process — NEW_TASK is required. Do not CLEAR_TASK:
+            // that destroyed the library and made a player crash look like a launcher crash.
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             context.startActivity(intent);
         } catch (Exception e) {
             toast(context, "не открылось: " + e.getMessage());

@@ -62,15 +62,30 @@ public class LibraryActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        DataSeed.ensure(this);
-        if (!getSharedPreferences("kenji_space", MODE_PRIVATE).getBoolean("mali_applied", false)) {
-            SettingsBank.applyDefault(this);
-            getSharedPreferences("kenji_space", MODE_PRIVATE).edit().putBoolean("mali_applied", true).commit();
+        try {
+            setContentView(buildUi());
+        } catch (Throwable t) {
+            android.util.Log.e("KenjiSpace", "ui", t);
+            TextView fallback = new TextView(this);
+            fallback.setText("Kenji Space");
+            fallback.setTextColor(TEXT);
+            fallback.setPadding(dp(16), dp(32), dp(16), dp(16));
+            setContentView(fallback);
         }
         askAllFiles();
-        setContentView(buildUi());
-        reload(false);
-        handleView(getIntent());
+        new Thread(() -> {
+            try {
+                DataSeed.ensure(this);
+                if (!getSharedPreferences("kenji_space", MODE_PRIVATE).getBoolean("mali_applied", false)) {
+                    SettingsBank.applyDefault(this);
+                    getSharedPreferences("kenji_space", MODE_PRIVATE)
+                            .edit().putBoolean("mali_applied", true).commit();
+                }
+            } catch (Throwable t) {
+                android.util.Log.e("KenjiSpace", "seed", t);
+            }
+            runOnUiThread(() -> reload(false));
+        }, "kenji-seed").start();
     }
 
     @Override
@@ -205,11 +220,7 @@ public class LibraryActivity extends Activity {
             return;
         }
         if (!DataSeed.keysOk(this) || DataSeed.firmwareNca(this) < 10) {
-            DataSeed.ensure(this);
-            refreshStatus();
-            if (!DataSeed.keysOk(this) || DataSeed.firmwareNca(this) < 10) {
-                toast("нет ключей или прошивки в bis/ — нажмите «Мост» или «Данные»");
-            }
+            toast("нет ключей или прошивки в bis/ — нажмите «Мост» или «Данные»");
         }
         OfficialLaunch.game(this, g);
     }

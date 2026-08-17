@@ -27,6 +27,18 @@ needle = 'android:name="org.kenjinx.android.MainActivity"'
 if needle not in text:
     raise SystemExit("official MainActivity missing")
 
+# Player in its own process so a native crash does not kill the library.
+text = text.replace(
+    'android:name="org.kenjinx.android.MainActivity"',
+    'android:name="org.kenjinx.android.MainActivity" android:process=":player"',
+    1,
+)
+text = text.replace(
+    'android:name="org.kenjinx.android.service.EmulationService"',
+    'android:name="org.kenjinx.android.service.EmulationService" android:process=":player"',
+    1,
+)
+
 # Official MainActivity stays and still plays the game, but is not the icon.
 text = text.replace(
     """            <intent-filter>

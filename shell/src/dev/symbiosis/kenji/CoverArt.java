@@ -48,11 +48,8 @@ public final class CoverArt {
             copy(found, cache);
             return BitmapFactory.decodeFile(found.getAbsolutePath());
         }
-        byte[] jpeg = extractNsp(context, game.path);
-        if (jpeg != null && jpeg.length > 32) {
-            write(cache, jpeg);
-            return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
-        }
+        // Do not decrypt NSP in the library process: a 12 MB NCA + AES on a
+        // small heap kills the whole launcher. Icons come from sidecar/cache.
         return null;
     }
 
