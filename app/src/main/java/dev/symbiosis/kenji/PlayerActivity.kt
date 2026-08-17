@@ -280,8 +280,7 @@ class PlayerActivity : Activity() {
             throw IllegalStateException("graphicsInitialize отказал")
         }
 
-        progressText = "ожидание Android Surface"
-        updateHud()
+        step("ожидание Android Surface")
         val window = if (NativePtr.isSet(pendingNativeWindow)) {
             pendingNativeWindow.also { pendingNativeWindow = NativePtr.NONE }
         } else {
@@ -296,13 +295,12 @@ class PlayerActivity : Activity() {
         nativeWindowHandle = window
         KenjinxNative.nativeSurface = window
         KenjinxNative.nativeWindow = window
+        step("окно ${NativePtr.hex(window)}")
         core.deviceSetWindowHandle(window)
         core.deviceSetSurfaceRotation(rotationDegrees())
-        core.inputInitialize(width, height)
 
         val extensions = arrayOf("VK_KHR_surface", "VK_KHR_android_surface")
-        progressText = "создание Vulkan renderer"
-        updateHud()
+        step("создание Vulkan renderer")
         if (!core.graphicsInitializeRenderer(extensions, extensions.size, 0L)) {
             throw IllegalStateException("graphicsInitializeRenderer отказал")
         }
@@ -326,6 +324,8 @@ class PlayerActivity : Activity() {
         firmwareInfo = firmwareVersion(core, home)
         updateHud()
 
+        step("inputInitialize")
+        core.inputInitialize(width, height)
         core.uiHandlerSetup()
         installCallbacks()
 
@@ -352,7 +352,6 @@ class PlayerActivity : Activity() {
             }
         }
 
-        // inputInitialize already ran before the renderer, like 1.0.12.
         val port = KenjiInput.connect(core)
         motion = MotionSensorBridge(this, core).apply {
             setControllerId(port)
@@ -1006,6 +1005,16 @@ class PlayerActivity : Activity() {
             "nro" -> 3
             "nsp" -> 1
             else -> throw IllegalArgumentException("сжатый или неподдерживаемый формат: $name")
+        }
+    }
+
+    private fun step(message: String) {
+        progressText = message
+        updateHud()
+        try {
+            Thread.sleep(80)
+        } catch (_: InterruptedException) {
+            // keep going
         }
     }
 
