@@ -12,6 +12,7 @@ public final class OfficialLaunch {
     private OfficialLaunch() {}
 
     public static String game(Context context, String path, String title) {
+        DataSeed.ensure(context);
         try {
             Intent intent = new Intent();
             intent.setClassName(context, "org.kenjinx.android.MainActivity");

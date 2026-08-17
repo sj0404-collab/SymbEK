@@ -54,6 +54,10 @@ export default function App() {
 
   const launch = (game) => {
     if (!game?.path) return;
+    if (status.firmwareOk === false) {
+      setNote("Сначала прошивка: нажмите «Мост прошивки». Без bis/ Kenji зависает на Loading.");
+      return;
+    }
     const r = parse(call("launch", game.path, game.title || ""), { ok: true });
     setNote(r.message || "открываю официальный Kenji…");
   };
