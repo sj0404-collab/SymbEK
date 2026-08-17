@@ -144,7 +144,7 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         // Android vendors expose a valid ANativeWindow only after the first
         // callback returns to the UI looper.
         pendingNativeWindow = runCatching {
-            if (holder.surface.isValid) NativeHelpers.instance.getNativeWindow(holder.surface) else -1L
+            if (holder.surface.isValid) nativeWindowFromSurface(holder.surface) else -1L
         }.getOrDefault(-1L)
         if (started) {
             if (rendererReady) rebindSurface(holder, holder.surfaceFrame.width(), holder.surfaceFrame.height())
@@ -526,13 +526,23 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         statsPump = null
     }
 
+    private fun nativeWindowFromSurface(surface: Surface): Long {
+        val safe = runCatching { NativeHelpers.instance.getNativeWindowSafe(surface) }
+            .getOrDefault(-1L)
+        if (safe > 0L) return safe
+        // Keep the official path as a compatibility fallback for devices whose
+        // linker exposes only the original helper entry point.
+        return runCatching { NativeHelpers.instance.getNativeWindow(surface) }
+            .getOrDefault(-1L)
+    }
+
     private fun obtainNativeWindow(holder: SurfaceHolder, timeoutMs: Long): Long {
         val attempts = (timeoutMs / 50L).toInt().coerceAtLeast(1)
         var last = -1L
         repeat(attempts) {
             if (holder.surface.isValid) {
                 last = runCatching {
-                    NativeHelpers.instance.getNativeWindow(holder.surface)
+                    nativeWindowFromSurface(holder.surface)
                 }.getOrDefault(-1L)
                 if (last > 0L) return last
             }
@@ -578,7 +588,7 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
     private fun releasePendingNativeWindow() {
         val pending = pendingNativeWindow
         pendingNativeWindow = -1L
-        if (pending > 0L) runCatching { NativeHelpers.instance.releaseNativeWindow(pending) }
+        if (pending > 0L) runCatching { NativeHelpers.instance.releaseNativeWindowSafe(pending) }
     }
 
     private fun releaseNativeWindow() {
@@ -587,7 +597,7 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         nativeWindowHandle = -1L
         KenjinxNative.nativeSurface = -1L
         KenjinxNative.nativeWindow = -1L
-        if (window > 0L) runCatching { NativeHelpers.instance.releaseNativeWindow(window) }
+        if (window > 0L) runCatching { NativeHelpers.instance.releaseNativeWindowSafe(window) }
     }
 
     private fun rotationDegrees(): Int = when (display?.rotation) {

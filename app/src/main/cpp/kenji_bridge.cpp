@@ -7,6 +7,7 @@
 // show the driver which is actually active on the phone.
 
 #include <jni.h>
+#include <android/native_window_jni.h>
 #include <vulkan/vulkan.h>
 #include <android/log.h>
 
@@ -42,6 +43,24 @@ std::string versionString(uint32_t version) {
 } // namespace
 
 extern "C" {
+
+// Use a uniquely named JNI entry point instead of relying on the official
+// helper's copy. This is the exact Android NDK conversion required by the
+// renderer: Java Surface -> referenced ANativeWindow pointer.
+JNIEXPORT jlong JNICALL
+Java_org_kenjinx_android_NativeHelpers_getNativeWindowSafe(JNIEnv* env, jobject, jobject surface) {
+    if (surface == nullptr) return static_cast<jlong>(-1);
+    ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
+    if (window == nullptr) return static_cast<jlong>(-1);
+    return reinterpret_cast<jlong>(window);
+}
+
+JNIEXPORT void JNICALL
+Java_org_kenjinx_android_NativeHelpers_releaseNativeWindowSafe(JNIEnv*, jobject, jlong handle) {
+    if (handle > 0) {
+        ANativeWindow_release(reinterpret_cast<ANativeWindow*>(handle));
+    }
+}
 
 JNIEXPORT jstring JNICALL
 Java_org_kenjinx_android_NativeHelpers_getVulkanDriverInfo(JNIEnv* env, jobject) {

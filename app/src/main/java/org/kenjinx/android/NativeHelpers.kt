@@ -17,6 +17,8 @@ class NativeHelpers {
     }
 
     external fun releaseNativeWindow(window: Long)
+    external fun getNativeWindowSafe(surface: Surface): Long
+    external fun releaseNativeWindowSafe(window: Long)
     external fun getCreateSurfacePtr(): Long
     external fun getNativeWindow(surface: Surface): Long
     external fun loadDriver(nativeLibPath: String, privateAppsPath: String, driverName: String): Long
