@@ -62,6 +62,7 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
     private var currentHolder: SurfaceHolder? = null
     private val shuttingDown = AtomicBoolean(false)
     private var nativeWindowHandle = -1L
+    private var pendingNativeWindow = -1L
     private lateinit var status: TextView
     private var touchPad: TouchPad? = null
     private var keyboardDialog: android.app.AlertDialog? = null
@@ -139,6 +140,12 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
     override fun surfaceCreated(holder: SurfaceHolder) {
         currentHolder = holder
         surfaceReady = true
+        // Query once on the Surface callback's UI thread as well. Some
+        // Android vendors expose a valid ANativeWindow only after the first
+        // callback returns to the UI looper.
+        pendingNativeWindow = runCatching {
+            if (holder.surface.isValid) NativeHelpers.instance.getNativeWindow(holder.surface) else -1L
+        }.getOrDefault(-1L)
         if (started) {
             if (rendererReady) rebindSurface(holder, holder.surfaceFrame.width(), holder.surfaceFrame.height())
             return
@@ -178,6 +185,7 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         if (currentHolder === holder) currentHolder = null
         surfaceReady = false
+        releasePendingNativeWindow()
         if (shuttingDown.get() || !rendererReady) return
 
         // A Surface can disappear during rotation or backgrounding while the
@@ -236,8 +244,18 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
             throw IllegalStateException("graphicsInitialize отказал")
         }
 
-        val window = NativeHelpers.instance.getNativeWindow(holder.surface)
-        if (window <= 0L) throw IllegalStateException("Android Surface не создал ANativeWindow")
+        progressText = "ожидание Android Surface"
+        updateHud()
+        val window = if (pendingNativeWindow > 0L) {
+            pendingNativeWindow.also { pendingNativeWindow = -1L }
+        } else {
+            obtainNativeWindow(holder, 3_000L)
+        }
+        if (window <= 0L) {
+            throw IllegalStateException(
+                "Android Surface не создал ANativeWindow: surfaceValid=${holder.surface.isValid}"
+            )
+        }
         nativeWindowHandle = window
         KenjinxNative.nativeSurface = window
         KenjinxNative.nativeWindow = window
@@ -508,12 +526,37 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         statsPump = null
     }
 
+    private fun obtainNativeWindow(holder: SurfaceHolder, timeoutMs: Long): Long {
+        val attempts = (timeoutMs / 50L).toInt().coerceAtLeast(1)
+        var last = -1L
+        repeat(attempts) {
+            if (holder.surface.isValid) {
+                last = runCatching {
+                    NativeHelpers.instance.getNativeWindow(holder.surface)
+                }.getOrDefault(-1L)
+                if (last > 0L) return last
+            }
+            try {
+                Thread.sleep(50L)
+            } catch (_: InterruptedException) {
+                return -1L
+            }
+        }
+        return last
+    }
+
     private fun rebindSurface(holder: SurfaceHolder, width: Int, height: Int) {
         if (!rendererReady || shuttingDown.get()) return
-        val newWindow = runCatching {
-            NativeHelpers.instance.getNativeWindow(holder.surface)
-        }.getOrDefault(-1L)
-        if (newWindow <= 0L) return
+        val newWindow = if (pendingNativeWindow > 0L) {
+            pendingNativeWindow.also { pendingNativeWindow = -1L }
+        } else {
+            obtainNativeWindow(holder, 300L)
+        }
+        if (newWindow <= 0L) {
+            progressText = "Android Surface ещё не готов"
+            updateHud()
+            return
+        }
 
         if (nativeWindowHandle > 0L && nativeWindowHandle != newWindow) {
             runCatching { Kenji.core.graphicsSetPresentEnabled(false) }
@@ -532,7 +575,14 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         runCatching { Kenji.core.graphicsSetPresentEnabled(true) }
     }
 
+    private fun releasePendingNativeWindow() {
+        val pending = pendingNativeWindow
+        pendingNativeWindow = -1L
+        if (pending > 0L) runCatching { NativeHelpers.instance.releaseNativeWindow(pending) }
+    }
+
     private fun releaseNativeWindow() {
+        releasePendingNativeWindow()
         val window = nativeWindowHandle
         nativeWindowHandle = -1L
         KenjinxNative.nativeSurface = -1L
