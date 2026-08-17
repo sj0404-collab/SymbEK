@@ -143,27 +143,44 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         // Query once on the Surface callback's UI thread as well. Some
         // Android vendors expose a valid ANativeWindow only after the first
         // callback returns to the UI looper.
+        releasePendingNativeWindow()
         pendingNativeWindow = runCatching {
             if (holder.surface.isValid) nativeWindowFromSurface(holder.surface) else -1L
         }.getOrDefault(-1L)
-        if (started) {
-            if (rendererReady) rebindSurface(holder, holder.surfaceFrame.width(), holder.surfaceFrame.height())
-            return
+        if (started && rendererReady) {
+            rebindSurface(holder, holder.surfaceFrame.width(), holder.surfaceFrame.height())
         }
+        // Do not start the emulator immediately from surfaceCreated. On
+        // several Android implementations the Surface isValid there but has
+        // no native window until the first surfaceChanged callback supplies
+        // final dimensions. The delayed fallback handles devices which do not
+        // emit a separate size callback.
+        status.postDelayed({
+            if (!started && surfaceReady && !shuttingDown.get()) {
+                startBoot(holder, holder.surfaceFrame.width(), holder.surfaceFrame.height())
+            }
+        }, 150L)
+    }
 
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        if (rendererReady && !shuttingDown.get()) {
+            rebindSurface(holder, width, height)
+        } else if (!started && !shuttingDown.get()) {
+            startBoot(holder, width, height)
+        }
+    }
+
+    private fun startBoot(holder: SurfaceHolder, width: Int, height: Int) {
         val fd = pfd?.fd
         if (fd == null || fd < 0) {
             fail("нет дескриптора игры")
             return
         }
-
         val path = intent.getStringExtra("path").orEmpty()
-        val width = holder.surfaceFrame.width().coerceAtLeast(128)
-        val height = holder.surfaceFrame.height().coerceAtLeast(128)
         started = true
         loop = Thread({
             try {
-                boot(holder, fd, path, width, height)
+                boot(holder, fd, path, width.coerceAtLeast(128), height.coerceAtLeast(128))
                 if (!shuttingDown.get() && !playing) {
                     runOnUiThread { fail("эмуляция остановилась до первого кадра") }
                 }
@@ -174,12 +191,6 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
                 }
             }
         }, "kenji-render-loop").also { it.start() }
-    }
-
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-        if (rendererReady && !shuttingDown.get()) {
-            rebindSurface(holder, width, height)
-        }
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
