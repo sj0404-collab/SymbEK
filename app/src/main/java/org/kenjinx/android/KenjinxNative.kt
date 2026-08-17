@@ -89,7 +89,11 @@ object KenjinxNative {
         if (listener != null) {
             runCatching { listener.invoke(title, message, initialText, newType, min, max) }
         } else {
-            Log.w(TAG, "UI callback with no listener type=$newType")
+            // The native side blocks until uiHandlerSetResponse. Leaving
+            // type=0 unanswered froze deviceInitialize on the UI thread
+            // (HUD stuck on «инициализация устройства», no timer).
+            Log.w(TAG, "UI callback with no listener type=$newType — auto-answer")
+            runCatching { Kenji.core.uiHandlerSetResponse(true, initialText) }
         }
 
         Log.d(TAG, "UI callback type=$newType range=$min..$max mode=$nMode")

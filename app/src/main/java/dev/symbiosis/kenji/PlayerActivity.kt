@@ -313,11 +313,17 @@ class PlayerActivity : Activity() {
         step("inputInitialize")
         core.inputInitialize(width, height)
 
-        // 1.0.12 did not install the UI handler before this call.
+        // 1.0.21 hung here on the UI thread: native posts a JNI callback
+        // to the main looper and waits, but the looper is inside this call.
+        // 1.0.17 crashed doing it on the worker after javaInitialize ran
+        // on UI (stale JNIEnv). Both calls now share this worker; main
+        // stays free to pump getSurfacePtr / updateUiHandler.
+        core.uiHandlerSetup()
+        installCallbacks()
         step("инициализация устройства")
         val deviceWatch = startNamedWatch("инициализация устройства")
         val deviceOk = try {
-            deviceInitializeOnUi(core, settings)
+            initializeDevice(core, settings)
         } finally {
             deviceWatch.set(false)
         }
@@ -328,9 +334,6 @@ class PlayerActivity : Activity() {
         }
         firmwareInfo = firmwareVersion(core, home)
         updateHud()
-
-        core.uiHandlerSetup()
-        installCallbacks()
 
         val type = romType(path)
         progressText = "загрузка игры…"
