@@ -76,6 +76,12 @@ export default function App() {
           </div>
         ))}
         {status.dataRoot ? <div>данные: {status.dataRoot}</div> : null}
+        {status.firmwareOk === false ? (
+          <div className="bad">
+            Прошивки в bis/ нет — поэтому Loading и тишина. Нажмите «Мост прошивки».
+            Если в Eden пусто, переименуйте registered.stash обратно в registered.
+          </div>
+        ) : null}
         {!ready ? <div className="bad">откройте из APK — моста нет</div> : null}
       </div>
 
@@ -86,7 +92,18 @@ export default function App() {
           Мост прошивки
         </button>
         <button onClick={() => call("openOfficialHome")}>Их интерфейс</button>
+        <button
+          onClick={() => {
+            const h = parse(call("settingsHelp"), {});
+            setHelp((h.text || "") + (status.dataRoot ? "\n\nсейчас: " + status.dataRoot : ""));
+            setNote(parse(call("bridgeFirmware"), {}).message || "");
+            reload();
+          }}
+        >
+          Настройки / автопочинка
+        </button>
       </div>
+      {help ? <pre className="note" style={{ whiteSpace: "pre-wrap" }}>{help}</pre> : null}
 
       <input
         className="search"

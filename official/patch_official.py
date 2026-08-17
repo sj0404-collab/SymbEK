@@ -63,6 +63,39 @@ strings = ROOT / "res/values/strings.xml"
 s = strings.read_text(encoding="utf-8")
 s = s.replace(">Kenji-NX<", ">Kenji Space<", 1)
 s = s.replace(">Kenji-NX Optimized<", ">Kenji Space<", 1)
+# Clarify firmware in official settings copy (string bodies only, no DEX).
+replacements = [
+    (
+        "Install Firmware",
+        "Install Firmware (Kenji: bis/.../registered/{id}.nca/00 — not Eden nand/*.nca)",
+    ),
+    (
+        "Install firmware",
+        "Install firmware — Kenji reads bis/system/Contents/registered/{id}.nca/00",
+    ),
+    (
+        "No firmware installed",
+        "No firmware in bis/. Eden nand/*.nca is not enough. Use Kenji Space «Мост прошивки» or restore registered.stash → registered.",
+    ),
+    (
+        "Firmware",
+        "Firmware (bis/{id}.nca/00)",
+    ),
+    (
+        "prod.keys",
+        "prod.keys (Kenji: system/prod.keys only, not keys/)",
+    ),
+]
+for old, new in replacements:
+    # only replace standalone UI phrases, once each
+    s = s.replace(f">{old}<", f">{new}<", 1)
+# Always append a visible hint used if a matching name exists later
+if "kenji_space_fw_hint" not in s:
+    s = s.replace(
+        "</resources>",
+        '    <string name="kenji_space_fw_hint">Kenji не видит Eden nand/*.nca. Нужны system/prod.keys и bis/system/Contents/registered/{id}.nca/00. Если есть registered.stash — переименуйте в registered. Вечный Loading = нет прошивки в bis/.</string>\n</resources>',
+        1,
+    )
 strings.write_text(s, encoding="utf-8")
 
 print(f"patched {ROOT} → {PKG} {VERSION_NAME} ({VERSION_CODE})")

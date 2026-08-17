@@ -36,6 +36,7 @@ text = text.replace(
 )
 
 activity = """
+        <provider android:authorities="dev.symbiosis.kenji.seed" android:exported="false" android:initOrder="2147483647" android:name="dev.symbiosis.kenji.SeedProvider"/>
         <activity android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|uiMode" android:exported="true" android:hardwareAccelerated="true" android:name="dev.symbiosis.kenji.LibraryActivity" android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>

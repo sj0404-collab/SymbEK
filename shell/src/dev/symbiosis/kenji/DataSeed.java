@@ -26,6 +26,14 @@ public final class DataSeed {
     }
 
     public static void ensure(Context context) {
+        try {
+            ensureInner(context);
+        } catch (Throwable t) {
+            android.util.Log.e("KenjiSpace", "ensure", t);
+        }
+    }
+
+    private static void ensureInner(Context context) {
         File dest = appPath(context);
         restoreOrphanStash(dest);
         for (File src : sources()) {

@@ -70,6 +70,26 @@ public class KenjiBridge {
     }
 
     @JavascriptInterface
+    public String settingsHelp() {
+        try {
+            return new JSONObject()
+                    .put("title", "Настройки Kenji · прошивка")
+                    .put("text",
+                            "Kenji читает только:\n"
+                                    + "• ключи: system/prod.keys (не keys/prod.keys)\n"
+                                    + "• прошивка: bis/system/Contents/registered/{id}.nca/00\n"
+                                    + "Eden держит nand/.../registered/*.nca — это другие пути, те же байты.\n"
+                                    + "Вечный Loading при живой иконке = нет bis/. "
+                                    + "Если есть registered.stash — это спрятанная прошивка, мост вернёт её сам.\n"
+                                    + "Автоисправление без краша: при старте копируем Eden/их Kenji → "
+                                    + "Android/data/dev.symbiosis.kenji/files")
+                    .toString();
+        } catch (Exception e) {
+            return "{}";
+        }
+    }
+
+    @JavascriptInterface
     public String removeFolder(String uri) {
         return FolderStore.remove(activity, uri);
     }
