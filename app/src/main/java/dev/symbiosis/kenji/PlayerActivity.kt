@@ -240,12 +240,11 @@ class PlayerActivity : Activity() {
         val core = Kenji.core
         if (!javaReady.get()) ensureJava(core, home)
 
-        // :player is killed on exit, so this is always a fresh
-        // javaInitialize. deviceReinitEmulation here used to dispose the
-        // just-created SwitchDevice and then deviceInitialize waited on the
-        // UI thread for a renderer the boot thread still owned — HUD froze
-        // on «инициализация устройства».
-        core.deviceReloadFilesystem()
+        // 1.0.12 reached «загрузка игры» with this trio on the worker:
+        // javaInitialize (this thread) → ReinitEmulation → ReloadFilesystem.
+        // Skipping Reinit left deviceInitialize parked on the UI thread.
+        runCatching { core.deviceReinitEmulation() }
+        runCatching { core.deviceReloadFilesystem() }
         installPendingFirmware(core)
         core.loggingSetEnabled(3, true)
         core.loggingSetEnabled(2, true)
@@ -299,6 +298,7 @@ class PlayerActivity : Activity() {
         KenjinxNative.nativeWindow = window
         core.deviceSetWindowHandle(window)
         core.deviceSetSurfaceRotation(rotationDegrees())
+        core.inputInitialize(width, height)
 
         val extensions = arrayOf("VK_KHR_surface", "VK_KHR_android_surface")
         progressText = "создание Vulkan renderer"
@@ -309,11 +309,7 @@ class PlayerActivity : Activity() {
         rendererReady = true
         core.graphicsRendererSetSize(width, height)
 
-        // deviceInitialize is the one call that must be on the Android
-        // main thread (1.0.17 SIGSEGV off-thread). The worker just waits.
-        // Do not SignalClose on a short timeout — that raced 1.0.16.
-        core.uiHandlerSetup()
-        installCallbacks()
+        // 1.0.12 did not install the UI handler before this call.
         progressText = "инициализация устройства"
         updateHud()
         val deviceWatch = startNamedWatch("инициализация устройства")
@@ -329,6 +325,9 @@ class PlayerActivity : Activity() {
         }
         firmwareInfo = firmwareVersion(core, home)
         updateHud()
+
+        core.uiHandlerSetup()
+        installCallbacks()
 
         val type = romType(path)
         progressText = "загрузка игры…"
@@ -353,9 +352,7 @@ class PlayerActivity : Activity() {
             }
         }
 
-        // The original Android port initializes input after the device and
-        // game are ready, then continuously pumps inputUpdate().
-        core.inputInitialize(width, height)
+        // inputInitialize already ran before the renderer, like 1.0.12.
         val port = KenjiInput.connect(core)
         motion = MotionSensorBridge(this, core).apply {
             setControllerId(port)
@@ -434,7 +431,9 @@ class PlayerActivity : Activity() {
         // Otherwise stash: one bad NCA still poisons VirtualFileSystem.
         val registered = FirmwareBridge.kenjiRegistered(home)
         val stashed = File(registered.parentFile, "registered.stash")
-        val stash = validHeaders < 10 && FirmwareBridge.kenjiReady(home) && registered.isDirectory
+        // 1.0.12 always hid firmware during javaInitialize. Init-with-firmware
+        // is still unproven on this 234-NCA tree and can stall deviceInitialize.
+        val stash = FirmwareBridge.kenjiReady(home) && registered.isDirectory
         if (stash) {
             if (stashed.exists()) stashed.deleteRecursively()
             if (!registered.renameTo(stashed)) {
@@ -445,7 +444,7 @@ class PlayerActivity : Activity() {
         }
 
         val initialized = try {
-            javaInitializeOnUi(core, home.absolutePath)
+            core.javaInitialize(home.absolutePath, JNIEnv.CURRENT)
         } finally {
             if (stashed.isDirectory) {
                 if (registered.exists()) registered.deleteRecursively()
