@@ -854,7 +854,7 @@ function paintDock() {
     </div>`;
   $('dock-go').onclick = () => play(g);
   $('dock-shots-btn').onclick = () => openShots(g);
-  $('dock-props').onclick = () => { if (N() && N().openGameMenu) N().openGameMenu(g.path); };
+  $('dock-props').onclick = () => openEdenProps(g);
   $('dock-aaa').onclick = () => {
     const r = parse(call('applyAaaMode'), { message: 'нет моста' });
     const f = dock.querySelector('.who');
@@ -1687,7 +1687,53 @@ function openGameSheet(info) {
 }
 
 $('q').addEventListener('input', render);
+function openEdenProps(g) {
+  g = g || RAIL_LIST[LAUNCH_I] || GAMES[0];
+  if (!g) {
+    $('sheet-title').textContent = 'Свойства игры';
+    $('sheet-note').textContent = 'сначала выберите игру';
+    $('sheet-actions').innerHTML = '<button class="ghost" id="a-close">Закрыть</button>';
+    $('a-close').onclick = closeSheet;
+    openSheet();
+    return;
+  }
+  const p = parse(call('gameProps', g.path, g.title || ''), { mods: [], cheats: [], dlc: [], saves: [], presets: [] });
+  const tid = p.titleId || g.titleId || '';
+  const block = (title, arr, empty) => {
+    const rows = (arr || []).map(it => '<div class="logline"><div class="ok">' + esc(it.name || it.titleId || '') +
+      (it.kind ? ' · ' + esc(it.kind) : '') + (it.source ? ' · ' + esc(it.source) : '') + '</div>' +
+      '<div class="wh">' + esc(it.path || it.detail || '') + '</div></div>').join('');
+    return '<div style="margin-top:10px;font-weight:600">' + title + '</div>' + (rows || '<div class="note">' + empty + '</div>');
+  };
+  $('sheet-title').textContent = (g.title || 'игра') + ' · свойства';
+  $('sheet-note').innerHTML =
+    '<div class="note">' + esc(p.hint || 'как в Eden: моды, пресеты, сейвы, читы, DLC') + '</div>' +
+    '<div class="tid">' + esc(tid) + '</div>' +
+    block('Моды', p.mods, 'модов нет · load/ или mods/contents/') +
+    block('Чит-коды', p.cheats, 'читов нет') +
+    block('DLC', p.dlc, 'DLC ставится в их Kenji') +
+    block('Сейвы', p.saves, 'сейвов нет') +
+    block('Пресеты', p.presets, 'сохраните пресет снизу');
+  $('sheet-actions').innerHTML =
+    '<button class="ghost" id="p-def">По умолчанию</button>' +
+    '<button class="ghost" id="p-save">Сохранить пресет</button>' +
+    '<button class="ghost" id="p-mods">Мост модов</button>' +
+    '<button class="go" id="p-play">Запустить</button>' +
+    '<button class="ghost" id="a-close">Закрыть</button>';
+  $('p-def').onclick = () => { $('sheet-note').innerHTML += '<div class="note">' + esc(parse(call('applyDefault'), {}).message || '') + '</div>'; };
+  $('p-save').onclick = () => {
+    const name = (g.title || 'игра') + ' · ' + new Date().toLocaleString('ru-RU');
+    const r = parse(call('saveGamePreset', name, tid), {});
+    $('sheet-note').innerHTML += '<div class="note">' + esc(r.message || name) + '</div>';
+  };
+  $('p-mods').onclick = () => { $('sheet-note').innerHTML += '<div class="note">' + esc(parse(call('bridgeMods'), {}).message || '') + '</div>'; };
+  $('p-play').onclick = () => { closeSheet(); play(g); };
+  $('a-close').onclick = closeSheet;
+  openSheet();
+}
 $('fab').onclick = () => { if (N() && N().pickFolder) N().pickFolder(); };
+if ($('fab-props')) $('fab-props').onclick = () => openEdenProps();
+if ($('dock-props')) { /* existing handler stays */ }
 $('fab-saves').onclick = pickSaves;
 $('btn-engines').onclick = () => openEnginesSheet();
 $('btn-tools').onclick = () => openUtilitiesSheet();

@@ -36,14 +36,14 @@ public final class DataSeed {
     private static void ensureInner(Context context) {
         File dest = appPath(context);
         restoreOrphanStash(dest);
-        for (File src : sources()) {
+        for (File src : sources(context)) {
             restoreOrphanStash(src);
             copyKey(new File(src, "system/prod.keys"), new File(dest, "system/prod.keys"));
             copyKey(new File(src, "keys/prod.keys"), new File(dest, "system/prod.keys"));
         }
         File destReg = new File(dest, "bis/system/Contents/registered");
         if (countKenji(destReg) >= 10) return;
-        for (File src : sources()) {
+        for (File src : sources(context)) {
             File kenji = new File(src, "bis/system/Contents/registered");
             File stash = new File(src, "bis/system/Contents/registered.stash");
             File eden = new File(src, "nand/system/Contents/registered");
@@ -99,6 +99,14 @@ public final class DataSeed {
 
     /** Older builds hid firmware here. Put it back so Kenji and Eden both see it. */
     public static void restoreOrphanStash(File root) {
+        try {
+            restoreOrphanStashInner(root);
+        } catch (Throwable t) {
+            android.util.Log.e("KenjiSpace", "stash", t);
+        }
+    }
+
+    private static void restoreOrphanStashInner(File root) {
         if (root == null || !root.isDirectory()) return;
         File registered = new File(root, "bis/system/Contents/registered");
         File stash = new File(root, "bis/system/Contents/registered.stash");
