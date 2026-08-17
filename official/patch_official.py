@@ -8,15 +8,8 @@ import sys
 
 ROOT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
 PKG = "dev.symbiosis.kenji"
-VERSION_CODE = sys.argv[2] if len(sys.argv) > 2 else "1025"
-VERSION_NAME = sys.argv[3] if len(sys.argv) > 3 else "1.0.25"
-
-
-def replace(path: pathlib.Path, old: str, new: str) -> None:
-    text = path.read_text(encoding="utf-8")
-    if old not in text:
-        raise SystemExit(f"{path}: missing {old!r}")
-    path.write_text(text.replace(old, new), encoding="utf-8")
+VERSION_CODE = sys.argv[2] if len(sys.argv) > 2 else "1035"
+VERSION_NAME = sys.argv[3] if len(sys.argv) > 3 else "1.0.35"
 
 
 manifest = ROOT / "AndroidManifest.xml"
@@ -26,7 +19,6 @@ text = text.replace(
     f'package="{PKG}"',
     1,
 )
-# Unique authorities so this installs beside official org.kenjinx.android.
 text = text.replace(
     'android:authorities="org.kenjinx.android.fileprovider"',
     f'android:authorities="{PKG}.fileprovider"',
@@ -43,7 +35,6 @@ text = text.replace(
     "org.kenjinx.android.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
     f"{PKG}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
 )
-# Keep querying the real official app.
 if f'<package android:name="{PKG}"/>' in text:
     text = text.replace(
         f'<package android:name="{PKG}"/>',
@@ -63,6 +54,36 @@ strings = ROOT / "res/values/strings.xml"
 s = strings.read_text(encoding="utf-8")
 s = s.replace(">Kenji-NX<", ">Kenji Space<", 1)
 s = s.replace(">Kenji-NX Optimized<", ">Kenji Space<", 1)
+replacements = [
+    (
+        "Install Firmware",
+        "Install Firmware (Kenji: bis/.../registered/{id}.nca/00 — not Eden nand/*.nca)",
+    ),
+    (
+        "Install firmware",
+        "Install firmware — Kenji reads bis/system/Contents/registered/{id}.nca/00",
+    ),
+    (
+        "No firmware installed",
+        "No firmware in bis/. Eden nand/*.nca is not enough. Restore registered.stash → registered.",
+    ),
+    (
+        "Firmware",
+        "Firmware (bis/{id}.nca/00)",
+    ),
+    (
+        "prod.keys",
+        "prod.keys (Kenji: system/prod.keys only, not keys/)",
+    ),
+]
+for old, new in replacements:
+    s = s.replace(f">{old}<", f">{new}<", 1)
+if "kenji_space_fw_hint" not in s:
+    s = s.replace(
+        "</resources>",
+        '    <string name="kenji_space_fw_hint">Kenji не видит Eden nand/*.nca. Нужны system/prod.keys и bis/system/Contents/registered/{id}.nca/00. Если есть registered.stash — переименуйте в registered. Вечный Loading = нет прошивки в bis/.</string>\n</resources>',
+        1,
+    )
 strings.write_text(s, encoding="utf-8")
 
 print(f"patched {ROOT} → {PKG} {VERSION_NAME} ({VERSION_CODE})")

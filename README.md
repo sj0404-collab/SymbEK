@@ -1,11 +1,13 @@
 # Kenji Space
 
-Официальный Kenji-NX **2.1.0-pr.2** целиком: три DEX, их дом, GameHost, EmulationService, все 18 `.so`. Ничего из оригинала не вырезается и своим лаунчером не подменяется.
+Официальный Kenji-NX **2.1.0-pr.2** целиком: их дом, GameHost, три DEX, все 18 `.so`. Иконка открывает их интерфейс — как в рабочей 1.0.25.
 
-Пакет `dev.symbiosis.kenji` — ставится **рядом** с их `org.kenjinx.android`. Подпись постоянная, `versionCode` растёт.
+Пакет `dev.symbiosis.kenji`. Рядом с `org.kenjinx.android`.
 
-Это тот же путь, что в рабочей **1.0.25**: иконка открывает их интерфейс, игра идёт через их `MainActivity`.
+Перед стартом их процесса тихо чинится прошивка (ошибка в их код не уходит):
 
-## Сборка
+- `registered.stash` / `junk` → `registered`
+- `keys/prod.keys` → `system/prod.keys`
+- Eden `nand/*.nca` → `bis/system/Contents/registered/{id}.nca/00`
 
-`.github/workflows/build.yml` скачивает официальный APK 49840045 байт, меняет package на `dev.symbiosis.kenji` через apktool (DEX и `.so` не трогает) и подписывает постоянным ключом.
+В их настройках подписи про firmware/keys уточнены: Kenji читает `bis/`, не Eden `nand/`.
