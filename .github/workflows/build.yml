@@ -31,8 +31,7 @@ jobs:
       - name: SDK tools
         run: |
           yes | sdkmanager --install \
-            "platform-tools" "platforms;android-35" \
-            "build-tools;34.0.0" "build-tools;35.0.0" || true
+            "platform-tools" "build-tools;34.0.0" "build-tools;35.0.0" || true
       - name: Restore the release keystore
         if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_type != 'debug' }}
         env:
@@ -45,7 +44,7 @@ jobs:
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/kenji-release.jks"
           test -s "$RUNNER_TEMP/kenji-release.jks"
 
-      - name: Official Kenji-NX + native launcher
+      - name: Official Kenji-NX 2.1.0-pr.2 → Kenji Space
         env:
           KENJI_KEYSTORE: ${{ runner.temp }}/kenji-release.jks
           KENJI_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -58,17 +57,6 @@ jobs:
           export KENJI_VERSION_NAME="1.0.$GITHUB_RUN_NUMBER"
           echo "версия: $KENJI_VERSION_NAME (code $KENJI_VERSION_CODE)"
 
-          ANDROID_JAR=$(find "$ANDROID_HOME/platforms" -name android.jar | sort | tail -1)
-          test -n "$ANDROID_JAR"
-          mkdir -p /tmp/shell-cls
-          find shell/src -name '*.java' > /tmp/shell-src.txt
-          javac --release 17 -encoding UTF-8 -cp "$ANDROID_JAR" -d /tmp/shell-cls @/tmp/shell-src.txt
-          BUILD_TOOLS=$(ls -d "$ANDROID_HOME/build-tools"/* | sort | tail -1)
-          find /tmp/shell-cls -name '*.class' > /tmp/shell-cls.txt
-          mkdir -p /tmp/shell-dex
-          "$BUILD_TOOLS/d8" --min-api 29 --output /tmp/shell-dex $(cat /tmp/shell-cls.txt)
-          test -f /tmp/shell-dex/classes.dex
-
           OFFICIAL=https://git.ryujinx.app/Kenji-NX/Android/releases/download/2.1.0-pr.2/kenji-nx-v2.1.0-pr.2-standard.apk
           APK_IN=/tmp/kenji-official.apk
           curl -fL --retry 3 -o "$APK_IN" "$OFFICIAL"
@@ -80,10 +68,11 @@ jobs:
 
           python3 official/patch_official.py /tmp/official-apktool \
             "$KENJI_VERSION_CODE" "$KENJI_VERSION_NAME"
-          python3 official/inject_shell.py /tmp/official-apktool /tmp/shell-dex/classes.dex
 
+          # Official APK intact: 3 DEX, Compose home, GameHost, all 18 .so.
           java -jar /tmp/apktool.jar b /tmp/official-apktool -o /tmp/kenji-unsigned.apk
 
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME/build-tools"/* | sort | tail -1)
           "$BUILD_TOOLS/zipalign" -p -f 4 /tmp/kenji-unsigned.apk /tmp/kenji-aligned.apk
           "$BUILD_TOOLS/apksigner" sign \
             --ks "$KENJI_KEYSTORE" \
@@ -95,7 +84,7 @@ jobs:
 
           unzip -l Kenji-Space.apk | grep -E 'lib/arm64-v8a/lib(kenjinx|kenjinxjni|avcodec|skiasharp)\.so'
           unzip -l Kenji-Space.apk | grep 'classes3.dex'
-          unzip -l Kenji-Space.apk | grep 'classes4.dex'
+          ! unzip -l Kenji-Space.apk | grep -q 'classes4.dex'
           ! unzip -l Kenji-Space.apk | grep -q 'assets/www/index.html'
           test "$(stat -c%s Kenji-Space.apk)" -gt 45000000
 
@@ -123,7 +112,7 @@ jobs:
           for i in 1 2 3 4 5; do
             if gh release create latest Kenji-Space.apk \
               --title "Kenji Space ${KENJI_VERSION_NAME}" \
-              --notes "Нативный лаунчер без HTML + официальный Kenji-NX 2.1.0-pr.2 целиком. Запуск через bootPath в их MainActivity. Пакет dev.symbiosis.kenji. Версия ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
+              --notes "Возврат рабочей 1.0.25: официальный Kenji-NX 2.1.0-pr.2 целиком, их дом и GameHost. Без HTML и без нашего лаунчера. Пакет dev.symbiosis.kenji. Версия ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
             then
               exit 0
             fi
