@@ -240,9 +240,11 @@ class PlayerActivity : Activity() {
         val core = Kenji.core
         if (!javaReady.get()) ensureJava(core, home)
 
-        // After a previous game was closed, the official core recreates its
-        // SwitchDevice from the already initialized VirtualFileSystem here.
-        core.deviceReinitEmulation()
+        // :player is killed on exit, so this is always a fresh
+        // javaInitialize. deviceReinitEmulation here used to dispose the
+        // just-created SwitchDevice and then deviceInitialize waited on the
+        // UI thread for a renderer the boot thread still owned — HUD froze
+        // on «инициализация устройства».
         core.deviceReloadFilesystem()
         installPendingFirmware(core)
         core.loggingSetEnabled(3, true)
@@ -304,22 +306,27 @@ class PlayerActivity : Activity() {
         rendererReady = true
         core.graphicsRendererSetSize(width, height)
 
-        // deviceInitialize must happen before inputInitialize: the official
-        // input driver attaches itself to SwitchDevice.EmulationContext.
+        // Same thread as graphicsInitializeRenderer. Official loadGame does
+        // graphics → renderer → deviceInitialize on one thread. Splitting
+        // the last call onto the UI thread deadlocked this Mali phone:
+        // HUD froze on «инициализация устройства».
+        core.uiHandlerSetup()
+        installCallbacks()
         progressText = "инициализация устройства"
         updateHud()
-        if (!deviceInitializeOnUi(core, settings)) {
+        val deviceWatch = startNamedWatch("инициализация устройства")
+        val deviceOk = try {
+            initializeDevice(core, settings)
+        } finally {
+            deviceWatch.set(false)
+        }
+        if (!deviceOk) {
             throw IllegalStateException(
                 "deviceInitialize отказал: ${deviceInitError.ifBlank { "нет контекста эмуляции" }}"
             )
         }
-        firmwareInfo = firmwareVersion(core, DataRoot.kenjiHome())
+        firmwareInfo = firmwareVersion(core, home)
         updateHud()
-        // Install the real Android UI handler before the game can request a
-        // software keyboard or confirmation dialog. The loader itself can
-        // block on updateUiHandler until we call uiHandlerSetResponse.
-        core.uiHandlerSetup()
-        installCallbacks()
 
         val type = romType(path)
         progressText = "загрузка игры…"
@@ -481,39 +488,30 @@ class PlayerActivity : Activity() {
         return ok.get()
     }
 
-    private fun deviceInitializeOnUi(core: KenjinxCore, settings: SettingsStore): Boolean {
+    private fun initializeDevice(core: KenjinxCore, settings: SettingsStore): Boolean {
         deviceInitError = ""
-        val done = CountDownLatch(1)
-        val ok = AtomicBoolean(false)
-        runOnUiThread {
-            try {
-                ok.set(
-                    core.deviceInitialize(
-                        settings.int("memoryManagerMode", 2).coerceIn(0, 2),
-                        settings.bool("useNce", false),
-                        settings.int("memoryConfiguration", 0).coerceIn(0, 2),
-                        languageOrdinal(),
-                        regionOrdinal(),
-                        settings.int("vSyncMode", 0).coerceIn(0, 2),
-                        settings.bool("enableDocked", false),
-                        settings.bool("enablePptc", true),
-                        settings.bool("enableLowPowerPptc", false),
-                        settings.bool("enableJitCacheEviction", false),
-                        false,
-                        settings.bool("enableFsIntegrityChecks", false),
-                        0,
-                        TimeZone.getDefault().id,
-                        settings.bool("ignoreMissingServices", false)
-                    )
-                )
-            } catch (t: Throwable) {
-                deviceInitError = t.message ?: t.javaClass.simpleName
-            } finally {
-                done.countDown()
-            }
+        return try {
+            core.deviceInitialize(
+                settings.int("memoryManagerMode", 2).coerceIn(0, 2),
+                settings.bool("useNce", false),
+                settings.int("memoryConfiguration", 0).coerceIn(0, 2),
+                languageOrdinal(),
+                regionOrdinal(),
+                settings.int("vSyncMode", 0).coerceIn(0, 2),
+                settings.bool("enableDocked", false),
+                settings.bool("enablePptc", true),
+                settings.bool("enableLowPowerPptc", false),
+                settings.bool("enableJitCacheEviction", false),
+                false,
+                settings.bool("enableFsIntegrityChecks", false),
+                0,
+                TimeZone.getDefault().id,
+                settings.bool("ignoreMissingServices", false)
+            )
+        } catch (t: Throwable) {
+            deviceInitError = t.message ?: t.javaClass.simpleName
+            false
         }
-        if (!done.await(30, TimeUnit.SECONDS)) return false
-        return ok.get()
     }
 
     private fun installCallbacks() {
@@ -986,7 +984,9 @@ class PlayerActivity : Activity() {
         }
     }
 
-    private fun startLoadWatch(): AtomicBoolean {
+    private fun startLoadWatch(): AtomicBoolean = startNamedWatch("загрузка игры")
+
+    private fun startNamedWatch(label: String): AtomicBoolean {
         val running = AtomicBoolean(true)
         Thread({
             var seconds = 0
@@ -998,11 +998,11 @@ class PlayerActivity : Activity() {
                 }
                 seconds++
                 if (running.get()) {
-                    progressText = "загрузка игры… ${seconds}с"
+                    progressText = "$label… ${seconds}с"
                     updateHud()
                 }
             }
-        }, "kenji-load-watch").start()
+        }, "kenji-watch").start()
         return running
     }
 
