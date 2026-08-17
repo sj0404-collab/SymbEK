@@ -307,9 +307,14 @@ class PlayerActivity : Activity() {
         rendererReady = true
         core.graphicsRendererSetSize(width, height)
 
+        // 1.0.12 had input up before deviceInitialize and reached Load.
+        // Doing it before the renderer crashed TextureView (1.0.20).
+        // After the renderer, before deviceInitialize, is the remaining slot.
+        step("inputInitialize")
+        core.inputInitialize(width, height)
+
         // 1.0.12 did not install the UI handler before this call.
-        progressText = "инициализация устройства"
-        updateHud()
+        step("инициализация устройства")
         val deviceWatch = startNamedWatch("инициализация устройства")
         val deviceOk = try {
             deviceInitializeOnUi(core, settings)
@@ -324,8 +329,6 @@ class PlayerActivity : Activity() {
         firmwareInfo = firmwareVersion(core, home)
         updateHud()
 
-        step("inputInitialize")
-        core.inputInitialize(width, height)
         core.uiHandlerSetup()
         installCallbacks()
 
