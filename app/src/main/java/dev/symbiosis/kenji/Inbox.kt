@@ -58,7 +58,36 @@ object Inbox {
         return ext in setOf("nsp", "xci", "nro") && File(path).isFile
     }
 
-    fun queueJson(): String = JSONObject().put("busy", false).put("pending", 0).put("note", "").toString()
+    /**
+     * Состояние очереди конвертера.
+     *
+     * Возвращалось `busy:false, pending:0, note:""` намертво, из-за чего
+     * панель никогда не показывала полосу «идёт распаковка». Очереди как
+     * фонового процесса здесь нет - импорт синхронный, - но сказать,
+     * сколько файлов лежит и сколько из них Kenji не запустит, можно
+     * честно.
+     */
+    fun queueJson(): String {
+        val files = dir().listFiles()?.filter { it.isFile } ?: emptyList()
+        val bad = files.count {
+            it.name.substringAfterLast('.', "").lowercase() !in setOf("nsp", "xci", "nro")
+        }
+        val bytes = files.sumOf { it.length() }
+        return JSONObject()
+            .put("busy", false)
+            .put("pending", bad)
+            .put("total", files.size)
+            .put("bytes", bytes)
+            .put(
+                "note",
+                when {
+                    files.isEmpty() -> ""
+                    bad == 0 -> "${files.size} файлов, ${human(bytes)} — все открываются"
+                    else -> "$bad из ${files.size} Kenji не откроет (nsz/xcz нужно разжать)"
+                }
+            )
+            .toString()
+    }
 
     private fun displayName(context: Context, uri: Uri): String = runCatching {
         context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)

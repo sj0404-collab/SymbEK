@@ -331,8 +331,40 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface fun shot(path: String): String = encodeJpeg(path)
         @JavascriptInterface fun shots(path: String, title: String): String = shotsJson()
         @JavascriptInterface fun memory(): String = memoryJson()
-        @JavascriptInterface fun prepareShaders(): String =
-            JSONObject().put("ok", true).put("note", "шейдер-кэш Kenji живёт в games/<title>/cache/shader").toString()
+        /**
+         * Кэш шейдеров: сколько его и где.
+         *
+         * Возвращалась одна и та же фраза без единого числа, хотя панель
+         * умеет показать размер (`r.size`). Кэш Kenji лежит в
+         * games/<TitleId>/cache/shader и состоит из guest.dat/guest.toc -
+         * имена видны в самом ядре. Считаем настоящий размер: это
+         * единственное, что здесь безопасно удалить, когда кончается
+         * место.
+         */
+        @JavascriptInterface fun prepareShaders(): String {
+            val games = File(DataRoot.resolve(), "games")
+            var bytes = 0L
+            var titles = 0
+            games.listFiles()?.filter { it.isDirectory }?.forEach { t ->
+                val cache = File(t, "cache/shader")
+                if (!cache.isDirectory) return@forEach
+                val n = cache.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                if (n > 0) { bytes += n; titles++ }
+            }
+            return JSONObject().put("ok", true)
+                .put("bytes", bytes)
+                .put("size", if (bytes > 0) human(bytes) else "")
+                .put("titles", titles)
+                .put(
+                    "note",
+                    if (bytes > 0)
+                        "кэш шейдеров: $titles игр, ${human(bytes)} в ${games.absolutePath}/<TitleId>/cache/shader. " +
+                            "Его можно удалить — соберётся заново, но первые минуты игра будет подтормаживать."
+                    else
+                        "кэша шейдеров пока нет: он появится в ${games.absolutePath}/<TitleId>/cache/shader после первого запуска"
+                )
+                .toString()
+        }
         @JavascriptInterface fun applyAaaMode(): String {
             settings.setBool("useNce", false)
             settings.setBool("enablePerformanceMode", false)
@@ -478,16 +510,35 @@ class MainActivity : AppCompatActivity() {
             return JSONObject().put("ok", true).put("message", "ядро удалено").toString()
         }
 
+        /**
+         * «Скачать ядро».
+         *
+         * Ядро лежит ВНУТРИ этого APK - официальный libkenjinx.so 2.1.0-pr.2
+         * кладётся в jniLibs на сборке. Скачивать нечего.
+         *
+         * А кнопка тянула по старому адресу engine-kenji: 55 МБ другого
+         * BuildID, которые потом всё равно не использовались, потому что
+         * EngineLoader.state() первым делом проверяет packagedCore() и
+         * возвращает вшитое. То есть трафик тратился впустую, а при
+         * неудаче ещё и показывалось «ядро не скачано» - при полностью
+         * рабочем ядре.
+         */
         @JavascriptInterface
         fun downloadCore() {
-            Thread({
-                val r = EngineDownloader.download(this@MainActivity, EngineLoader.Engine.KENJI) { done, total ->
-                    val payload = JSONObject().put("done", done).put("total", total).toString()
-                    main.post { web.evaluateJavascript("try{if(typeof onEngineProgress==='function')onEngineProgress($payload)}catch(e){}", null) }
-                }
-                val payload = JSONObject().put("ok", r.ok).put("message", r.message).toString()
-                main.post { web.evaluateJavascript("try{if(typeof onEngineDone==='function')onEngineDone($payload)}catch(e){}", null) }
-            }, "kenji-dl").start()
+            val st = EngineLoader.state(this@MainActivity, EngineLoader.Engine.KENJI)
+            val payload = if (st is EngineLoader.State.Ready) {
+                JSONObject().put("ok", true)
+                    .put("message", "ядро уже внутри приложения (${st.bytes / 1048576} МБ), качать нечего")
+            } else {
+                JSONObject().put("ok", false)
+                    .put("message", "ядра нет в этой сборке — пересоберите APK, оно вшивается на сборке")
+            }.toString()
+            main.post {
+                web.evaluateJavascript(
+                    "try{if(typeof onEngineDone==='function')onEngineDone($payload)}catch(e){}", null
+                )
+                Toast.makeText(this@MainActivity, JSONObject(payload).optString("message"), Toast.LENGTH_LONG).show()
+            }
         }
 
         @JavascriptInterface
@@ -500,8 +551,15 @@ class MainActivity : AppCompatActivity() {
                 }
                 val st = EngineLoader.state(this@MainActivity, EngineLoader.Engine.KENJI)
                 if (st !is EngineLoader.State.Ready) {
-                    Toast.makeText(this@MainActivity, "скачайте ядро: Ядра → Скачать", Toast.LENGTH_LONG).show()
-                    downloadCore()
+                    // Ядро вшито в APK, так что сюда попадают только сборки,
+                    // где оно не попало в jniLibs. Предлагать «скачать»
+                    // бессмысленно - качать неоткуда.
+                    Toast.makeText(
+                        this@MainActivity,
+                        "ядро не найдено в приложении: " +
+                            ((st as? EngineLoader.State.Broken)?.reason ?: "нет libkenjinx.so"),
+                        Toast.LENGTH_LONG
+                    ).show()
                     return@post
                 }
                 startActivity(PlayerActivity.intent(this@MainActivity, path, title))

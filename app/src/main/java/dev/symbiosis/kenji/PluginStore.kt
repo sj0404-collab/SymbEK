@@ -17,15 +17,56 @@ class PluginStore(private val context: Context) {
         val arr = JSONArray()
         packs().listFiles()?.filter { it.isDirectory }?.forEach { dir ->
             val man = readMan(dir)
+            val bytes = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
             arr.put(
                 JSONObject()
                     .put("id", dir.name)
                     .put("name", man.optString("name", dir.name))
                     .put("enabled", man.optBoolean("enabled", true))
-                    .put("files", dir.listFiles()?.size ?: 0)
+                    .put("files", dir.walkTopDown().count { it.isFile })
+                    .put("size", human(bytes))
             )
         }
-        return JSONObject().put("items", arr).put("logs", JSONArray()).toString()
+        // Лог установки, а не пустой массив.
+        //
+        // Панель рисует раздел «лог появится после первого файла» и
+        // ждала записей от logs[] - которых не появлялось никогда,
+        // потому что здесь стояло JSONArray(). Теперь каждая установка
+        // дописывает строку, и видно, что за файл куда лёг и почему
+        // отказал.
+        return JSONObject().put("items", arr).put("logs", logsJson()).toString()
+    }
+
+    private fun logFile(): File = File(root(), "install.log")
+
+    /** Последние записи, свежие сверху. */
+    private fun logsJson(): JSONArray {
+        val arr = JSONArray()
+        val f = logFile()
+        if (!f.isFile) return arr
+        runCatching {
+            f.readLines().takeLast(30).reversed().forEach { line ->
+                runCatching { arr.put(JSONObject(line)) }
+            }
+        }
+        return arr
+    }
+
+    private fun log(ok: Boolean, message: String, where: String, file: String) {
+        runCatching {
+            val entry = JSONObject()
+                .put("ok", ok).put("message", message)
+                .put("where", where).put("file", file)
+                .put("at", System.currentTimeMillis())
+            logFile().appendText(entry.toString() + "\n")
+        }
+    }
+
+    private fun human(n: Long): String = when {
+        n <= 0 -> ""
+        n < 1024L * 1024 -> "${n / 1024} КБ"
+        n < 1024L * 1024 * 1024 -> "${n / (1024 * 1024)} МБ"
+        else -> "%.1f ГБ".format(n / (1024.0 * 1024 * 1024))
     }
 
     fun payloadJson(): String {
@@ -58,6 +99,7 @@ class PluginStore(private val context: Context) {
         val dir = File(packs(), id)
         if (!dir.isDirectory) return fail("нет плагина")
         dir.deleteRecursively()
+        log(true, "плагин $id удалён", dir.absolutePath, "")
         return JSONObject().put("ok", true).put("message", "снесён").toString()
     }
 
@@ -94,8 +136,14 @@ class PluginStore(private val context: Context) {
                 JSONObject().put("name", name).put("enabled", true).toString(2)
             )
         }
-        JSONObject().put("ok", true).put("message", "Поздравляю: $name встроен").put("id", dest.name).toString()
-    }.getOrElse { fail(it.message ?: "не установился") }
+        val files = dest.walkTopDown().count { it.isFile }
+        log(true, "$name встроен ($files файлов)", dest.absolutePath, name)
+        JSONObject().put("ok", true).put("message", "Поздравляю: $name встроен")
+            .put("id", dest.name).put("files", files).toString()
+    }.getOrElse {
+        log(false, it.message ?: "не установился", packs().absolutePath, "")
+        fail(it.message ?: "не установился")
+    }
 
     private fun readMan(dir: File): JSONObject {
         val f = File(dir, "plugin.json")
