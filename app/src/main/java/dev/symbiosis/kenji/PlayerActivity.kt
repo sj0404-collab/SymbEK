@@ -877,15 +877,35 @@ class PlayerActivity : Activity() {
         SettingsStore(this).setString("pendingFirmware", "")
     }
 
-    private fun openRom(path: String): ParcelFileDescriptor? = runCatching {
-        if (path.startsWith("/")) {
-            ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_ONLY)
+
+    private fun romType(path: String): Int {
+        val name = if (path.startsWith("/")) {
+            path.substringAfterLast('/')
         } else {
-            contentResolver.openFileDescriptor(Uri.parse(path), "r")
+            runCatching { Uri.parse(path).lastPathSegment }.getOrNull() ?: path
         }
-    }.getOrNull()
-}
-                 updateHud()
+        return when (name.substringAfterLast('.', "").lowercase().substringBefore('?')) {
+            "xci" -> 2
+            "nro" -> 3
+            "nsp" -> 1
+            else -> throw IllegalArgumentException("сжатый или неподдерживаемый формат: $name")
+        }
+    }
+
+    private fun startLoadWatch(): AtomicBoolean {
+        val running = AtomicBoolean(true)
+        Thread({
+            var seconds = 0
+            while (running.get() && !shuttingDown.get()) {
+                try {
+                    Thread.sleep(1000)
+                } catch (_: InterruptedException) {
+                    break
+                }
+                seconds++
+                if (running.get()) {
+                    progressText = "загрузка игры… ${seconds}с"
+                    updateHud()
                 }
             }
         }, "kenji-load-watch").start()
@@ -896,10 +916,9 @@ class PlayerActivity : Activity() {
         // Official FileStream opens the descriptor ReadWrite. A read-only
         // fd makes the .NET host block inside deviceLoadDescriptor.
         if (path.startsWith("/")) {
-            ParcelFileDescriptor.open(
-                File(path),
-                ParcelFileDescriptor.MODE_READ_WRITE
-            )
+            runCatching {
+                ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_WRITE)
+            }.getOrNull() ?: ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_ONLY)
         } else {
             val uri = Uri.parse(path)
             contentResolver.openFileDescriptor(uri, "rw")
