@@ -89,6 +89,44 @@ object FirmwareBridge {
         return moved
     }
 
+    /**
+     * Move registered entries whose 00 is not a decryptable NCA.
+     * Returns how many were quarantined. Needs header_key in prod.keys.
+     */
+    /** -1 if header_key is missing so we cannot judge. */
+    fun countValidHeaders(root: File): Int {
+        val key = NcaHeader.readHeaderKey(DataRoot.kenjiKeysFile(root)) ?: return -1
+        val registered = kenjiRegistered(root)
+        if (!registered.isDirectory) return 0
+        return registered.listFiles()?.count { entry ->
+            entry.isDirectory && NcaHeader.isValid(File(entry, "00"), key)
+        } ?: 0
+    }
+
+    fun quarantineInvalid(root: File): Int {
+        val registered = kenjiRegistered(root)
+        if (!registered.isDirectory) return 0
+        val key = NcaHeader.readHeaderKey(DataRoot.kenjiKeysFile(root)) ?: return 0
+        val entries = registered.listFiles()?.filter { it.isDirectory } ?: return 0
+        val good = ArrayList<File>()
+        val bad = ArrayList<File>()
+        for (entry in entries) {
+            if (NcaHeader.isValid(File(entry, "00"), key)) good.add(entry) else bad.add(entry)
+        }
+        // If nothing decrypts, header_key/XTS is wrong — leave the tree alone
+        // and let the stash path handle javaInitialize.
+        if (good.isEmpty()) return 0
+        val junk = File(registered.parentFile, "registered.junk")
+        junk.mkdirs()
+        var moved = 0
+        for (entry in bad) {
+            val dest = File(junk, entry.name)
+            if (dest.exists()) dest.deleteRecursively()
+            if (entry.renameTo(dest)) moved++
+        }
+        return moved
+    }
+
     fun findSources(): List<Source> {
         val sd = Environment.getExternalStorageDirectory()
         val candidates = listOf(

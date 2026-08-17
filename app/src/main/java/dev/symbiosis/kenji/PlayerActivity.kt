@@ -256,27 +256,79 @@ class PlayerActivity : Activity() {
         updateHud()
 
         val settings = SettingsStore(this)
-        // Official MainViewModel.loadGame: graphics → renderer →
-        // deviceInitialize, all on the Android main thread. 1.0.16 hopped
-        // only deviceInitialize to UI (deadlock). 1.0.17 ran it on this
-        // worker and the native core SIGSEGV'd immediately — the comment
-        // in official code is literal: emulation context is main-thread
-        // only. Do the whole block on UI; load + render loop stay here.
-        val uiError = AtomicReference<String?>(null)
-        val uiDone = CountDownLatch(1)
-        runOnUiThread {
-            try {
-                prepareGraphicsAndDevice(core, settings, surface, width, height, home)
-            } catch (t: Throwable) {
-                uiError.set(t.message ?: t.javaClass.simpleName)
-            } finally {
-                uiDone.countDown()
-            }
+        // graphics + renderer stay on this worker: 1.0.16/17 got past them
+        // here. 1.0.18 moved the whole block onto UI and Android ANR-killed
+        // the player before the HUD passed the first lines.
+        val scale = when (settings.int("resolution", 2).coerceIn(0, 3)) {
+            0 -> 0.5f
+            1 -> 0.75f
+            3 -> 2f
+            else -> 1f
         }
-        if (!uiDone.await(120, TimeUnit.SECONDS)) {
-            throw IllegalStateException("graphics/deviceInitialize на UI не вернулись за 120с")
+        val backend = settings.int("backendThreading", 1).coerceIn(0, 2)
+        if (!core.graphicsInitialize(
+                scale,
+                0f,
+                true,
+                true,
+                false,
+                settings.bool("enableMacroHLE", true),
+                settings.bool("enableShaderCache", true),
+                settings.bool("enableTextureRecompression", false),
+                backend
+            )
+        ) {
+            throw IllegalStateException("graphicsInitialize отказал")
         }
-        uiError.get()?.let { throw IllegalStateException(it) }
+
+        progressText = "ожидание Android Surface"
+        updateHud()
+        val window = if (NativePtr.isSet(pendingNativeWindow)) {
+            pendingNativeWindow.also { pendingNativeWindow = NativePtr.NONE }
+        } else {
+            obtainNativeWindow(surface, 3_000L)
+        }
+        if (!NativePtr.isSet(window)) {
+            throw IllegalStateException(
+                "Android Surface не создал ANativeWindow: surfaceValid=${surface.isValid}, " +
+                    "fromSurface=${NativePtr.hex(lastSurfaceWindow)}"
+            )
+        }
+        nativeWindowHandle = window
+        KenjinxNative.nativeSurface = window
+        KenjinxNative.nativeWindow = window
+        core.deviceSetWindowHandle(window)
+        core.deviceSetSurfaceRotation(rotationDegrees())
+
+        val extensions = arrayOf("VK_KHR_surface", "VK_KHR_android_surface")
+        progressText = "создание Vulkan renderer"
+        updateHud()
+        if (!core.graphicsInitializeRenderer(extensions, extensions.size, 0L)) {
+            throw IllegalStateException("graphicsInitializeRenderer отказал")
+        }
+        rendererReady = true
+        core.graphicsRendererSetSize(width, height)
+
+        // deviceInitialize is the one call that must be on the Android
+        // main thread (1.0.17 SIGSEGV off-thread). The worker just waits.
+        // Do not SignalClose on a short timeout — that raced 1.0.16.
+        core.uiHandlerSetup()
+        installCallbacks()
+        progressText = "инициализация устройства"
+        updateHud()
+        val deviceWatch = startNamedWatch("инициализация устройства")
+        val deviceOk = try {
+            deviceInitializeOnUi(core, settings)
+        } finally {
+            deviceWatch.set(false)
+        }
+        if (!deviceOk) {
+            throw IllegalStateException(
+                "deviceInitialize отказал: ${deviceInitError.ifBlank { "нет контекста эмуляции" }}"
+            )
+        }
+        firmwareInfo = firmwareVersion(core, home)
+        updateHud()
 
         val type = romType(path)
         progressText = "загрузка игры…"
@@ -371,21 +423,19 @@ class PlayerActivity : Activity() {
         }
 
         val junk = FirmwareBridge.quarantineJunk(home)
+        val validHeaders = FirmwareBridge.countValidHeaders(home)
+        val bad = if (validHeaders >= 10) FirmwareBridge.quarantineInvalid(home) else 0
         val nca = FirmwareBridge.kenjiNcaCount(home)
         progressText = "javaInitialize · $nca NCA" +
-            if (junk > 0) " · убрал $junk битых" else ""
+            if (junk + bad > 0) " · карантин ${junk + bad}" else ""
         updateHud()
 
-        // SwitchDevice parses every NCA on first init. One bad file →
-        // javaInitialize returns false and VirtualFileSystem cannot be
-        // created again in this process. 1.0.12 hid firmware and init
-        // succeeded. 1.0.15 stopped hiding it and init died on this
-        // phone's 234-NCA tree. Stash, init, restore; ReinitEmulation
-        // after that rescans bis/ into ContentManager.
+        // Init WITH firmware only when we decrypted at least 10 headers.
+        // Otherwise stash: one bad NCA still poisons VirtualFileSystem.
         val registered = FirmwareBridge.kenjiRegistered(home)
         val stashed = File(registered.parentFile, "registered.stash")
-        val hadFw = FirmwareBridge.kenjiReady(home)
-        if (hadFw && registered.isDirectory) {
+        val stash = validHeaders < 10 && FirmwareBridge.kenjiReady(home) && registered.isDirectory
+        if (stash) {
             if (stashed.exists()) stashed.deleteRecursively()
             if (!registered.renameTo(stashed)) {
                 throw IllegalStateException(
@@ -464,78 +514,23 @@ class PlayerActivity : Activity() {
         }
     }
 
-    /** Official loadGame body. Must run on the Android main thread. */
-    private fun prepareGraphicsAndDevice(
-        core: KenjinxCore,
-        settings: SettingsStore,
-        surface: Surface,
-        width: Int,
-        height: Int,
-        home: File
-    ) {
-        val scale = when (settings.int("resolution", 2).coerceIn(0, 3)) {
-            0 -> 0.5f
-            1 -> 0.75f
-            3 -> 2f
-            else -> 1f
+    private fun deviceInitializeOnUi(core: KenjinxCore, settings: SettingsStore): Boolean {
+        val done = CountDownLatch(1)
+        val ok = AtomicBoolean(false)
+        runOnUiThread {
+            try {
+                ok.set(initializeDevice(core, settings))
+            } catch (t: Throwable) {
+                deviceInitError = t.message ?: t.javaClass.simpleName
+            } finally {
+                done.countDown()
+            }
         }
-        val backend = settings.int("backendThreading", 1).coerceIn(0, 2)
-        progressText = "инициализация Vulkan"
-        paintHud()
-        if (!core.graphicsInitialize(
-                scale,
-                0f,
-                true,
-                true,
-                false,
-                settings.bool("enableMacroHLE", true),
-                settings.bool("enableShaderCache", true),
-                settings.bool("enableTextureRecompression", false),
-                backend
-            )
-        ) {
-            throw IllegalStateException("graphicsInitialize отказал")
+        if (!done.await(180, TimeUnit.SECONDS)) {
+            deviceInitError = "не вернулся за 180с"
+            return false
         }
-
-        progressText = "ожидание Android Surface"
-        paintHud()
-        val window = if (NativePtr.isSet(pendingNativeWindow)) {
-            pendingNativeWindow.also { pendingNativeWindow = NativePtr.NONE }
-        } else {
-            nativeWindowFromTexture(textureObject) ?: nativeWindowFromSurface(surface)
-        }
-        if (!NativePtr.isSet(window)) {
-            throw IllegalStateException(
-                "Android Surface не создал ANativeWindow: surfaceValid=${surface.isValid}, " +
-                    "fromSurface=${NativePtr.hex(lastSurfaceWindow)}"
-            )
-        }
-        nativeWindowHandle = window
-        KenjinxNative.nativeSurface = window
-        KenjinxNative.nativeWindow = window
-        core.deviceSetWindowHandle(window)
-        core.deviceSetSurfaceRotation(rotationDegrees())
-
-        val extensions = arrayOf("VK_KHR_surface", "VK_KHR_android_surface")
-        progressText = "создание Vulkan renderer"
-        paintHud()
-        if (!core.graphicsInitializeRenderer(extensions, extensions.size, 0L)) {
-            throw IllegalStateException("graphicsInitializeRenderer отказал")
-        }
-        rendererReady = true
-        core.graphicsRendererSetSize(width, height)
-
-        core.uiHandlerSetup()
-        installCallbacks()
-        progressText = "инициализация устройства"
-        paintHud()
-        if (!initializeDevice(core, settings)) {
-            throw IllegalStateException(
-                "deviceInitialize отказал: ${deviceInitError.ifBlank { "нет контекста эмуляции" }}"
-            )
-        }
-        firmwareInfo = firmwareVersion(core, home)
-        paintHud()
+        return ok.get()
     }
 
     private fun paintHud() {
