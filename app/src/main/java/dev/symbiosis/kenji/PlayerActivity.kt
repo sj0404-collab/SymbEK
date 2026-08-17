@@ -7,11 +7,12 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
-import android.view.Gravity
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -45,6 +46,7 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
     private var started = false
     private var playing = false
     private lateinit var status: TextView
+    private var touchPad: TouchPad? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -66,15 +68,26 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
             textSize = 14f
             setPadding(24, 48, 24, 16)
         }
-        root.addView(status)
+
+        // Экранное управление поверх картинки.
+        //
+        // Раньше здесь была только кнопка «Выйти»: игра запускалась и не
+        // отвечала ни на что - ни касание, ни геймпад никуда не уходили.
+        // Кнопки рисуются сразу, но ввод начнёт приниматься лишь после
+        // inputConnectGamepad, который зовётся уже после старта ядра.
+        val pad = TouchPad(this, Kenji.core) { showMenu() }
+        pad.opacity = SettingsStore(this).int("overlayOpacity", 70)
+        touchPad = pad
         root.addView(
-            Button(this).apply { text = "Выйти"; setOnClickListener { leave() } },
+            pad,
             FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM or Gravity.END
-            ).apply { setMargins(24, 24, 24, 48) }
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
         )
+        pad.visibility = if (SettingsStore(this).bool("showOverlay", true)) View.VISIBLE else View.GONE
+
+        root.addView(status)
         setContentView(root)
         if (path.isBlank()) return fail("нет пути")
         pfd = openRom(path) ?: return fail("не открылся файл игры")
@@ -161,7 +174,22 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
             throw IllegalStateException("не открыл игру (проверьте ключи и прошивку в папке данных)")
         }
         playing = true
-        runOnUiThread { status.text = "Kenji · играет" }
+
+        // Геймпад подключается ПОСЛЕ загрузки игры.
+        //
+        // inputConnectGamepad возвращает номер порта, и без него любой
+        // inputSetButtonPressed уходит в никуда: ядру некуда положить
+        // нажатие. Официальная оболочка делает это в тот же момент - в
+        // GameController при первом событии, когда controllerId ещё -1.
+        val port = KenjiInput.connect(core)
+        runCatching { core.inputSetClientSize(w, h) }
+
+        runOnUiThread {
+            status.text = if (port >= 0) "Kenji · играет" else "Kenji · играет (геймпад не подключился)"
+            // Через три секунды подпись убирается: она нужна на старте,
+            // а дальше только мешает смотреть на игру.
+            status.postDelayed({ status.text = "" }, 3000)
+        }
         core.graphicsRendererRunLoop()
     }
 
@@ -224,7 +252,89 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         return ok.get()
     }
 
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
+    /**
+     * Меню по кнопке «≡».
+     *
+     * Единственный способ выйти раньше был отдельной кнопкой «Выйти»
+     * поверх игры - она занимала угол экрана и нажималась случайно.
+     * Здесь же живут вещи, которые нужны прямо во время игры.
+     */
+    private fun showMenu() {
+        val pad = touchPad ?: return
+        val s = SettingsStore(this)
+        val items = arrayOf(
+            if (pad.visibility == View.VISIBLE) "Скрыть управление" else "Показать управление",
+            "Прозрачность кнопок: ${s.int("overlayOpacity", 70)}%",
+            "Выйти из игры"
+        )
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Kenji")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> {
+                        val show = pad.visibility != View.VISIBLE
+                        pad.visibility = if (show) View.VISIBLE else View.GONE
+                        if (!show) pad.releaseAll()
+                        s.setBool("showOverlay", show)
+                    }
+                    1 -> {
+                        // По кругу, чтобы не заводить отдельный экран.
+                        val next = when (s.int("overlayOpacity", 70)) {
+                            in 0..40 -> 70
+                            in 41..79 -> 100
+                            else -> 35
+                        }
+                        s.setInt("overlayOpacity", next)
+                        pad.opacity = next
+                    }
+                    2 -> leave()
+                }
+            }
+            .setNegativeButton("Закрыть", null)
+            .show()
+    }
+
+    /** Физический геймпад: кнопки. */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (playing) {
+            val code = KenjiInput.fromKeyCode(event.keyCode)
+            if (code != KenjiInput.NONE) {
+                when (event.action) {
+                    KeyEvent.ACTION_DOWN -> KenjiInput.press(Kenji.core, code)
+                    KeyEvent.ACTION_UP -> KenjiInput.release(Kenji.core, code)
+                }
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    /** Физический геймпад: стики, курки, крестовина осями. */
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        if (playing && KenjiInput.motion(Kenji.core, event)) return true
+        return super.dispatchGenericMotionEvent(event)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Свернули игру - отпустить всё, иначе кнопка останется зажатой
+        // и персонаж будет бежать сам.
+        touchPad?.releaseAll()
+        if (playing) runCatching { Kenji.core.audioSetPaused(true) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (playing) runCatching { Kenji.core.audioSetPaused(false) }
+    }
+
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        if (!playing) return
+        // Поворот экрана: без этого картинка остаётся в старом размере
+        // и растягивается.
+        runCatching { Kenji.core.graphicsRendererSetSize(width, height) }
+        runCatching { Kenji.core.inputSetClientSize(width, height) }
+    }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         if (playing) {

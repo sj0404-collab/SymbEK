@@ -42,8 +42,40 @@ interface KenjinxCore : Library {
     fun graphicsInitializeRenderer(extensions: Array<String>, extensionsLength: Int, driver: Long): Boolean
     fun graphicsRendererSetSize(width: Int, height: Int)
     fun graphicsRendererRunLoop()
+    fun graphicsRendererSetVsync(vsyncMode: Int)
     fun deviceLoadDescriptor(fileDescriptor: Int, gameType: Int, updateDescriptor: Int): Boolean
     fun inputInitialize(width: Int, height: Int)
+
+    // --- Ввод -------------------------------------------------------------
+    // Сигнатуры сверены с KenjinxNativeJna из официального 2.1.0-pr.2:
+    //   inputSetButtonPressed (I I)V, inputSetStickAxis (I F F I)V,
+    //   inputSetTouchPoint (I I)V,    inputConnectGamepad (I)I.
+    // Без этих объявлений JNA просто не находила методов, и играть было
+    // нечем: игра запускалась и не реагировала ни на что.
+    fun inputConnectGamepad(index: Int): Int
+    fun inputSetButtonPressed(button: Int, controllerId: Int)
+    fun inputSetButtonReleased(button: Int, controllerId: Int)
+    fun inputSetStickAxis(stick: Int, x: Float, y: Float, controllerId: Int)
+    fun inputSetTouchPoint(x: Int, y: Int)
+    fun inputReleaseTouchPoint()
+    fun inputSetClientSize(width: Int, height: Int)
+    fun inputUpdate()
+
+    // Звук: официальная оболочка глушит его на паузе. Без этого игра
+    // продолжает играть музыку, когда её свернули.
+    fun audioSetPaused(paused: Boolean)
+    fun audioSetMuted(muted: Boolean)
+
+    // Смена размера поверхности при повороте экрана.
+    fun deviceResize(width: Int, height: Int)
+    fun deviceSetSurfaceRotation(rotation: Int)
+    fun deviceRecreateSwapchain()
+    fun deviceSetWindowHandle(handle: Long)
+
+    // Счётчики для наложения FPS.
+    fun deviceGetGameFrameRate(): Double
+    fun deviceGetGameFrameTime(): Double
+    fun deviceGetGameFifo(): Double
     fun deviceCloseEmulation()
     fun deviceSignalEmulationClose()
     fun loggingSetEnabled(logLevel: Int, enabled: Boolean)
