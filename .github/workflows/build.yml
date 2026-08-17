@@ -80,7 +80,9 @@ jobs:
 
           python3 official/patch_official.py /tmp/official-apktool \
             "$KENJI_VERSION_CODE" "$KENJI_VERSION_NAME"
-          python3 official/inject_shell.py /tmp/official-apktool web/dist /tmp/shell-dex/classes.dex
+          mkdir -p /tmp/www
+          cp app/src/main/assets/kenji.html /tmp/www/index.html
+          python3 official/inject_shell.py /tmp/official-apktool /tmp/www /tmp/shell-dex/classes.dex
 
           java -jar /tmp/apktool.jar b /tmp/official-apktool -o /tmp/kenji-unsigned.apk
 

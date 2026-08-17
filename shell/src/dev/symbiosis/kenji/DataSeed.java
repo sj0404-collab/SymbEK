@@ -118,9 +118,56 @@ public final class DataSeed {
         if (junk.isDirectory()) mergeInto(junk, registered);
     }
 
-    private static List<File> sources() {
+    public static void setUserRoot(Context context, String path) {
+        if (path == null || path.isEmpty()) return;
+        context.getSharedPreferences("kenji_space", Context.MODE_PRIVATE)
+                .edit().putString("data_root", path).commit();
+    }
+
+    public static File userRoot(Context context) {
+        String p = context.getSharedPreferences("kenji_space", Context.MODE_PRIVATE)
+                .getString("data_root", "");
+        if (p == null || p.isEmpty()) return null;
+        File f = new File(p);
+        return f.isDirectory() ? f : null;
+    }
+
+    public static File bestEden(Context context) {
+        for (File src : sources(context)) {
+            if (new File(src, "nand/system/Contents/registered").isDirectory()
+                    || new File(src, "load").isDirectory()
+                    || new File(src, "keys/prod.keys").isFile()) {
+                return src;
+            }
+        }
+        return userRoot(context);
+    }
+
+    public static String treeToPath(android.net.Uri uri) {
+        try {
+            String id = android.provider.DocumentsContract.getTreeDocumentId(uri);
+            String[] parts = id.split(":", 2);
+            String rel = parts.length > 1 ? parts[1] : "";
+            if ("primary".equalsIgnoreCase(parts[0])) {
+                File f = new File(Environment.getExternalStorageDirectory(), rel);
+                if (f.isDirectory()) return f.getAbsolutePath();
+            }
+            File alt = new File("/storage/" + parts[0] + "/" + rel);
+            if (alt.isDirectory()) return alt.getAbsolutePath();
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private static List<File> sources(Context context) {
         File sd = Environment.getExternalStorageDirectory();
         List<File> out = new ArrayList<>();
+        File user = userRoot(context);
+        if (user != null) {
+            out.add(user);
+            File files = new File(user, "files");
+            if (files.isDirectory()) out.add(files);
+        }
         String[] rel = {
                 "Download/ed/Eden/files",
                 "Download/ed/Eden",
@@ -136,7 +183,29 @@ public final class DataSeed {
             File f = new File(sd, r);
             if (f.isDirectory()) out.add(f);
         }
+        scanKids(new File(sd, "Download"), out);
+        scanKids(sd, out);
         return out;
+    }
+
+    private static void scanKids(File dir, List<File> out) {
+        File[] kids = dir.listFiles();
+        if (kids == null) return;
+        for (File f : kids) {
+            if (!f.isDirectory()) continue;
+            if (looksData(f) && !out.contains(f)) out.add(f);
+            File files = new File(f, "files");
+            if (looksData(files) && !out.contains(files)) out.add(files);
+        }
+    }
+
+    private static boolean looksData(File f) {
+        return f.isDirectory() && (
+                new File(f, "system/prod.keys").isFile()
+                        || new File(f, "keys/prod.keys").isFile()
+                        || new File(f, "bis").isDirectory()
+                        || new File(f, "nand").isDirectory()
+                        || new File(f, "load").isDirectory());
     }
 
     private static JSONObject item(String label, boolean present, String detail) throws Exception {
