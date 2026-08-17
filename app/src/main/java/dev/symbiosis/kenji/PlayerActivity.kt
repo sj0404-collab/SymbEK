@@ -155,23 +155,38 @@ class PlayerActivity : Activity() {
         }
         updateHud()
         textureSurface?.let { surface ->
-            if (!started && surfaceReady) startBoot(surface, textureWidth, textureHeight)
+            if (!started && surfaceReady) {
+                status.postDelayed({
+                    if (!started && surfaceReady && !shuttingDown.get()) {
+                        startBoot(surface, textureWidth, textureHeight)
+                    }
+                }, 100L)
+            }
         }
     }
 
     private fun onTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
         releaseTextureSurface()
-        textureSurface = Surface(texture)
+        val createdSurface = Surface(texture)
+        textureSurface = createdSurface
         textureWidth = width
         textureHeight = height
         surfaceReady = true
         releasePendingNativeWindow()
-        pendingNativeWindow = nativeWindowFromSurface(textureSurface!!)
-        if (started && rendererReady) {
-            rebindSurface(textureSurface!!, width, height)
-        } else if (!started && !shuttingDown.get() && pfd != null) {
-            startBoot(textureSurface!!, width, height)
-        }
+
+        // Do not call ANativeWindow_fromSurface while the TextureView callback
+        // is still executing. On some Mali Android builds the Java Surface is
+        // valid at that point, but its native producer is attached only after
+        // the callback returns to the UI queue.
+        status.postDelayed({
+            if (textureSurface !== createdSurface || !surfaceReady || shuttingDown.get()) return@postDelayed
+            pendingNativeWindow = nativeWindowFromSurface(createdSurface)
+            if (started && rendererReady) {
+                rebindSurface(createdSurface, textureWidth, textureHeight)
+            } else if (!started && pfd != null) {
+                startBoot(createdSurface, textureWidth, textureHeight)
+            }
+        }, 100L)
     }
 
     private fun onTextureSizeChanged(width: Int, height: Int) {
@@ -678,7 +693,7 @@ class PlayerActivity : Activity() {
             progressText
         }
         val text = buildString {
-            append("Kenji Space\n")
+            append("Kenji Space ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · TextureView\n")
             append(displayTitle)
             append('\n')
             append(dataSummary)
