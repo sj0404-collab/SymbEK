@@ -63,6 +63,7 @@ class PlayerActivity : Activity() {
     private var nativeWindowHandle = -1L
     private var pendingNativeWindow = -1L
     private var textureSurface: Surface? = null
+    private var textureObject: SurfaceTexture? = null
     private var textureWidth = 0
     private var textureHeight = 0
     private lateinit var status: TextView
@@ -168,6 +169,7 @@ class PlayerActivity : Activity() {
     private fun onTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
         releaseTextureSurface()
         val createdSurface = Surface(texture)
+        textureObject = texture
         textureSurface = createdSurface
         textureWidth = width
         textureHeight = height
@@ -180,7 +182,7 @@ class PlayerActivity : Activity() {
         // the callback returns to the UI queue.
         status.postDelayed({
             if (textureSurface !== createdSurface || !surfaceReady || shuttingDown.get()) return@postDelayed
-            pendingNativeWindow = nativeWindowFromSurface(createdSurface)
+            pendingNativeWindow = nativeWindowFromTexture(textureObject) ?: nativeWindowFromSurface(createdSurface)
             if (started && rendererReady) {
                 rebindSurface(createdSurface, textureWidth, textureHeight)
             } else if (!started && pfd != null) {
@@ -212,6 +214,7 @@ class PlayerActivity : Activity() {
     private fun releaseTextureSurface() {
         textureSurface?.let { runCatching { it.release() } }
         textureSurface = null
+        textureObject = null
         textureWidth = 0
         textureHeight = 0
     }
@@ -578,12 +581,20 @@ class PlayerActivity : Activity() {
             .getOrDefault(-1L)
     }
 
+    private fun nativeWindowFromTexture(texture: SurfaceTexture?): Long? {
+        if (texture == null) return null
+        val handle = runCatching {
+            NativeHelpers.instance.getNativeWindowFromTexture(texture)
+        }.getOrDefault(-1L)
+        return handle.takeIf { it > 0L }
+    }
+
     private fun obtainNativeWindow(surface: Surface, timeoutMs: Long): Long {
         val attempts = (timeoutMs / 50L).toInt().coerceAtLeast(1)
         var last = -1L
         repeat(attempts) {
             if (surface.isValid) {
-                last = nativeWindowFromSurface(surface)
+                last = nativeWindowFromTexture(textureObject) ?: nativeWindowFromSurface(surface)
                 if (last > 0L) return last
             }
             try {
@@ -693,7 +704,7 @@ class PlayerActivity : Activity() {
             progressText
         }
         val text = buildString {
-            append("Kenji Space ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · TextureView\n")
+            append("Kenji Space ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · TextureView/ASurfaceTexture\n")
             append(displayTitle)
             append('\n')
             append(dataSummary)

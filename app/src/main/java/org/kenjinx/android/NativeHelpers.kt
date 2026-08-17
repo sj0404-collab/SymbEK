@@ -18,6 +18,7 @@ class NativeHelpers {
 
     external fun releaseNativeWindow(window: Long)
     external fun getNativeWindowSafe(surface: Surface): Long
+    external fun getNativeWindowFromTexture(texture: android.graphics.SurfaceTexture): Long
     external fun releaseNativeWindowSafe(window: Long)
     external fun getCreateSurfacePtr(): Long
     external fun getNativeWindow(surface: Surface): Long

@@ -8,6 +8,7 @@
 
 #include <jni.h>
 #include <android/native_window_jni.h>
+#include <android/surface_texture.h>
 #include <vulkan/vulkan.h>
 #include <android/log.h>
 
@@ -60,6 +61,22 @@ Java_org_kenjinx_android_NativeHelpers_releaseNativeWindowSafe(JNIEnv*, jobject,
     if (handle > 0) {
         ANativeWindow_release(reinterpret_cast<ANativeWindow*>(handle));
     }
+}
+
+// TextureView can expose its producer directly through the NDK SurfaceTexture
+// API (available on the app's minSdk 29). This bypasses the Java Surface
+// wrapper entirely and is a separate fallback for vendors where
+// ANativeWindow_fromSurface() returns null even though Surface.isValid is true.
+JNIEXPORT jlong JNICALL
+Java_org_kenjinx_android_NativeHelpers_getNativeWindowFromTexture(
+        JNIEnv* env, jobject, jobject surfaceTexture) {
+    if (surfaceTexture == nullptr) return static_cast<jlong>(-1);
+    ASurfaceTexture* nativeTexture = ASurfaceTexture_fromSurfaceTexture(env, surfaceTexture);
+    if (nativeTexture == nullptr) return static_cast<jlong>(-1);
+    ANativeWindow* window = ASurfaceTexture_acquireANativeWindow(nativeTexture);
+    ASurfaceTexture_release(nativeTexture);
+    if (window == nullptr) return static_cast<jlong>(-1);
+    return reinterpret_cast<jlong>(window);
 }
 
 JNIEXPORT jstring JNICALL
