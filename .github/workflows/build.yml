@@ -71,7 +71,7 @@ jobs:
         # Debug builds use the Android debug key. Release builds use one
         # permanent key, otherwise every GitHub runner creates a different
         # signature and Android rejects the next update.
-        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_type != 'debug' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build_type != 'debug' }}
         env:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
         run: |
@@ -92,7 +92,12 @@ jobs:
           KENJI_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KENJI_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          TYPE=${{ github.event.inputs.build_type || 'release' }}
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            TYPE="${{ github.event.inputs.build_type }}"
+          else
+            # A normal push must be buildable without release secrets.
+            TYPE=debug
+          fi
           if [ "$TYPE" = debug ]; then TASK=assembleDebug; else TASK=assembleRelease; fi
 
           # versionCode обязан расти от сборки к сборке, иначе установка
@@ -131,7 +136,7 @@ jobs:
           name: Kenji-Space
           path: app/build/outputs/apk/**/*.apk
       - name: Release
-        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_type != 'debug' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build_type != 'debug' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
