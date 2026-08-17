@@ -50,4 +50,4 @@ Workflow `.github/workflows/build.yml`:
 5. проверяет, что APK содержит `libkenjinx.so`, `libkenjinxjni.so`, `libsymbiosis_kenji.so` и `kenji.html`;
 6. release подписывается постоянным ключом репозитория.
 
-Обычный push в `main` собирает debug APK без секретов и публикует его как Actions artifact. Для signed release нужно вручную запустить workflow с `build_type=release`; нужны secrets `KEYSTORE_B64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS` и `KEY_PASSWORD`.
+Каждый push в `main` собирает signed release с одним постоянным ключом и автоматически увеличивает `versionCode`/`versionName`. Для этого в настройках репозитория нужны secrets `KEYSTORE_B64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS` и `KEY_PASSWORD`. Debug можно запустить вручную через workflow с `build_type=debug`.
