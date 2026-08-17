@@ -45,7 +45,7 @@ jobs:
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/kenji-release.jks"
           test -s "$RUNNER_TEMP/kenji-release.jks"
 
-      - name: Official Kenji-NX + familiar library
+      - name: Official Kenji-NX + native launcher
         env:
           KENJI_KEYSTORE: ${{ runner.temp }}/kenji-release.jks
           KENJI_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -62,7 +62,7 @@ jobs:
           test -n "$ANDROID_JAR"
           mkdir -p /tmp/shell-cls
           find shell/src -name '*.java' > /tmp/shell-src.txt
-          javac --release 17 -cp "$ANDROID_JAR" -d /tmp/shell-cls @/tmp/shell-src.txt
+          javac --release 17 -encoding UTF-8 -cp "$ANDROID_JAR" -d /tmp/shell-cls @/tmp/shell-src.txt
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME/build-tools"/* | sort | tail -1)
           find /tmp/shell-cls -name '*.class' > /tmp/shell-cls.txt
           mkdir -p /tmp/shell-dex
@@ -80,9 +80,7 @@ jobs:
 
           python3 official/patch_official.py /tmp/official-apktool \
             "$KENJI_VERSION_CODE" "$KENJI_VERSION_NAME"
-          mkdir -p /tmp/www
-          cp app/src/main/assets/kenji.html /tmp/www/index.html
-          python3 official/inject_shell.py /tmp/official-apktool /tmp/www /tmp/shell-dex/classes.dex
+          python3 official/inject_shell.py /tmp/official-apktool /tmp/shell-dex/classes.dex
 
           java -jar /tmp/apktool.jar b /tmp/official-apktool -o /tmp/kenji-unsigned.apk
 
@@ -98,7 +96,7 @@ jobs:
           unzip -l Kenji-Space.apk | grep -E 'lib/arm64-v8a/lib(kenjinx|kenjinxjni|avcodec|skiasharp)\.so'
           unzip -l Kenji-Space.apk | grep 'classes3.dex'
           unzip -l Kenji-Space.apk | grep 'classes4.dex'
-          unzip -l Kenji-Space.apk | grep 'assets/www/index.html'
+          ! unzip -l Kenji-Space.apk | grep -q 'assets/www/index.html'
           test "$(stat -c%s Kenji-Space.apk)" -gt 45000000
 
           echo "MD5=$(md5sum Kenji-Space.apk | cut -d' ' -f1)"
@@ -125,7 +123,7 @@ jobs:
           for i in 1 2 3 4 5; do
             if gh release create latest Kenji-Space.apk \
               --title "Kenji Space ${KENJI_VERSION_NAME}" \
-              --notes "React-библиотека в APK + официальный Kenji-NX 2.1.0-pr.2 целиком. Игра открывается их GameHost. Пакет dev.symbiosis.kenji. Версия ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
+              --notes "Нативный лаунчер без HTML + официальный Kenji-NX 2.1.0-pr.2 целиком. Запуск через bootPath в их MainActivity. Пакет dev.symbiosis.kenji. Версия ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
             then
               exit 0
             fi

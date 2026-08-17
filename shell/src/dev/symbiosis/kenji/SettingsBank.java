@@ -2,23 +2,31 @@ package dev.symbiosis.kenji;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.preference.PreferenceManager;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-/** Global and per-game presets. Stored here; launch still uses official Kenji. */
+/**
+ * Named presets live in kenji_presets. Applying a preset writes the official
+ * Kenji QuickSettings keys (same default SharedPreferences their UI uses).
+ */
 public final class SettingsBank {
     private SettingsBank() {}
 
-    private static SharedPreferences prefs(Context c) {
+    private static SharedPreferences named(Context c) {
         return c.getSharedPreferences("kenji_presets", Context.MODE_PRIVATE);
+    }
+
+    private static SharedPreferences official(Context c) {
+        return PreferenceManager.getDefaultSharedPreferences(c);
     }
 
     public static String listJson(Context c, String titleId) {
         try {
             JSONArray items = new JSONArray();
-            addNamed(items, prefs(c).getString("global", "[]"));
+            addNamed(items, named(c).getString("global", "[]"));
             if (titleId != null && !titleId.isEmpty()) {
-                addNamed(items, prefs(c).getString("game_" + titleId, "[]"));
+                addNamed(items, named(c).getString("game_" + titleId, "[]"));
             }
             return new JSONObject().put("items", items).put("titleId", titleId == null ? "" : titleId).toString();
         } catch (Exception e) {
@@ -28,14 +36,21 @@ public final class SettingsBank {
 
     public static String save(Context c, String name, String titleId, boolean global) {
         try {
+            if (name == null || name.trim().isEmpty()) name = "пресет";
             String key = global || titleId == null || titleId.isEmpty() ? "global" : "game_" + titleId;
-            JSONArray arr = new JSONArray(prefs(c).getString(key, "[]"));
-            JSONObject snap = current(c);
-            snap.put("name", name);
+            JSONArray arr = new JSONArray(named(c).getString(key, "[]"));
+            JSONObject snap = snapshot(c);
+            snap.put("name", name.trim());
             snap.put("scope", key.startsWith("game_") ? "game" : "all");
             snap.put("titleId", titleId == null ? "" : titleId);
-            arr.put(snap);
-            prefs(c).edit().putString(key, arr.toString()).commit();
+            JSONArray next = new JSONArray();
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.optJSONObject(i);
+                if (o != null && name.equals(o.optString("name"))) continue;
+                if (o != null) next.put(o);
+            }
+            next.put(snap);
+            named(c).edit().putString(key, next.toString()).commit();
             return new JSONObject().put("ok", true).put("message", "пресет «" + name + "» сохранён").toString();
         } catch (Exception e) {
             return "{\"ok\":false}";
@@ -48,13 +63,7 @@ public final class SettingsBank {
             if (found == null) {
                 return new JSONObject().put("ok", false).put("message", "пресета нет").toString();
             }
-            SharedPreferences.Editor e = c.getSharedPreferences("kenji_space", Context.MODE_PRIVATE).edit();
-            e.putBoolean("enablePptc", found.optBoolean("enablePptc", true));
-            e.putBoolean("useNce", found.optBoolean("useNce", false));
-            e.putBoolean("enableDocked", found.optBoolean("enableDocked", false));
-            e.putInt("resolution", found.optInt("resolution", 2));
-            e.putInt("memoryConfiguration", found.optInt("memoryConfiguration", 0));
-            e.commit();
+            writeOfficial(c, found);
             return new JSONObject().put("ok", true).put("message", "включён пресет «" + name + "»").toString();
         } catch (Exception e) {
             return "{\"ok\":false}";
@@ -62,20 +71,31 @@ public final class SettingsBank {
     }
 
     public static String applyDefault(Context c) {
-        return apply(c, saveDefault(c));
+        try {
+            JSONObject d = maliDefault();
+            writeOfficial(c, d);
+            save(c, "по умолчанию", "", true);
+            return new JSONObject()
+                    .put("ok", true)
+                    .put("message", "по умолчанию: NCE выкл, PPTC вкл, DRAM 4 ГиБ, Host Unchecked")
+                    .toString();
+        } catch (Exception e) {
+            return "{\"ok\":false}";
+        }
     }
 
     public static String remove(Context c, String name) {
         try {
-            for (String key : new String[]{"global"}) {
-                JSONArray src = new JSONArray(prefs(c).getString(key, "[]"));
+            SharedPreferences p = named(c);
+            for (String key : p.getAll().keySet()) {
+                JSONArray src = new JSONArray(p.getString(key, "[]"));
                 JSONArray next = new JSONArray();
                 for (int i = 0; i < src.length(); i++) {
                     JSONObject o = src.optJSONObject(i);
                     if (o != null && name.equals(o.optString("name"))) continue;
                     if (o != null) next.put(o);
                 }
-                prefs(c).edit().putString(key, next.toString()).commit();
+                p.edit().putString(key, next.toString()).commit();
             }
             return new JSONObject().put("ok", true).put("message", "пресет убран").toString();
         } catch (Exception e) {
@@ -85,15 +105,14 @@ public final class SettingsBank {
 
     public static String settingsJson(Context c) {
         try {
-            SharedPreferences p = c.getSharedPreferences("kenji_space", Context.MODE_PRIVATE);
+            SharedPreferences p = official(c);
             JSONArray toggles = new JSONArray();
             toggles.put(tog("enablePptc", "PPTC", "кэш профилей", p.getBoolean("enablePptc", true)));
             toggles.put(tog("useNce", "NCE", "на этом Mali лучше выкл", p.getBoolean("useNce", false)));
             toggles.put(tog("enableDocked", "Docked", "телевизионный режим", p.getBoolean("enableDocked", false)));
             return new JSONObject()
                     .put("toggles", toggles)
-                    .put("resolution", p.getInt("resolution", 2))
-                    .put("resolutionLabel", "1x")
+                    .put("resolution", p.getFloat("resScale", 1f))
                     .put("cpuLabel", p.getBoolean("useNce", false) ? "NCE" : "JIT")
                     .toString();
         } catch (Exception e) {
@@ -102,7 +121,7 @@ public final class SettingsBank {
     }
 
     public static String setBool(Context c, String key, boolean on) {
-        c.getSharedPreferences("kenji_space", Context.MODE_PRIVATE).edit().putBoolean(key, on).commit();
+        official(c).edit().putBoolean(key, on).commit();
         try {
             return new JSONObject().put("ok", true).put("message", key + (on ? " вкл" : " выкл")).toString();
         } catch (Exception e) {
@@ -110,20 +129,48 @@ public final class SettingsBank {
         }
     }
 
-    private static String saveDefault(Context c) {
-        String name = "по умолчанию";
-        save(c, name, "", true);
-        return name;
+    private static JSONObject maliDefault() throws Exception {
+        return new JSONObject()
+                .put("enablePptc", true)
+                .put("useNce", false)
+                .put("enableDocked", false)
+                .put("enableLowPowerPptc", false)
+                .put("enableJitCacheEviction", false)
+                .put("enableFsIntegrityChecks", false)
+                .put("ignoreMissingServices", false)
+                .put("memoryConfiguration", 0) // 4GiB
+                .put("memoryManagerMode", 2)   // HostMappedUnsafe
+                .put("resScale", 1.0);
     }
 
-    private static JSONObject current(Context c) throws Exception {
-        SharedPreferences p = c.getSharedPreferences("kenji_space", Context.MODE_PRIVATE);
+    private static JSONObject snapshot(Context c) throws Exception {
+        SharedPreferences p = official(c);
         return new JSONObject()
                 .put("enablePptc", p.getBoolean("enablePptc", true))
                 .put("useNce", p.getBoolean("useNce", false))
                 .put("enableDocked", p.getBoolean("enableDocked", false))
-                .put("resolution", p.getInt("resolution", 2))
-                .put("memoryConfiguration", p.getInt("memoryConfiguration", 0));
+                .put("enableLowPowerPptc", p.getBoolean("enableLowPowerPptc", false))
+                .put("enableJitCacheEviction", p.getBoolean("enableJitCacheEviction", false))
+                .put("enableFsIntegrityChecks", p.getBoolean("enableFsIntegrityChecks", false))
+                .put("ignoreMissingServices", p.getBoolean("ignoreMissingServices", false))
+                .put("memoryConfiguration", p.getInt("memoryConfiguration", 0))
+                .put("memoryManagerMode", p.getInt("memoryManagerMode", 2))
+                .put("resScale", (double) p.getFloat("resScale", 1f));
+    }
+
+    private static void writeOfficial(Context c, JSONObject s) {
+        official(c).edit()
+                .putBoolean("enablePptc", s.optBoolean("enablePptc", true))
+                .putBoolean("useNce", s.optBoolean("useNce", false))
+                .putBoolean("enableDocked", s.optBoolean("enableDocked", false))
+                .putBoolean("enableLowPowerPptc", s.optBoolean("enableLowPowerPptc", false))
+                .putBoolean("enableJitCacheEviction", s.optBoolean("enableJitCacheEviction", false))
+                .putBoolean("enableFsIntegrityChecks", s.optBoolean("enableFsIntegrityChecks", false))
+                .putBoolean("ignoreMissingServices", s.optBoolean("ignoreMissingServices", false))
+                .putInt("memoryConfiguration", s.optInt("memoryConfiguration", 0))
+                .putInt("memoryManagerMode", s.optInt("memoryManagerMode", 2))
+                .putFloat("resScale", (float) s.optDouble("resScale", 1.0))
+                .commit();
     }
 
     private static void addNamed(JSONArray items, String raw) {
@@ -140,9 +187,9 @@ public final class SettingsBank {
     private static JSONObject find(Context c, String name) {
         try {
             JSONArray all = new JSONArray();
-            addNamed(all, prefs(c).getString("global", "[]"));
-            for (String key : prefs(c).getAll().keySet()) {
-                if (key.startsWith("game_")) addNamed(all, prefs(c).getString(key, "[]"));
+            addNamed(all, named(c).getString("global", "[]"));
+            for (String key : named(c).getAll().keySet()) {
+                if (key.startsWith("game_")) addNamed(all, named(c).getString(key, "[]"));
             }
             for (int i = 0; i < all.length(); i++) {
                 JSONObject o = all.optJSONObject(i);

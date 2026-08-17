@@ -58,6 +58,29 @@ public final class DataSeed {
         }
     }
 
+    public static boolean keysOk(Context context) {
+        File keys = new File(appPath(context), "system/prod.keys");
+        return keys.isFile() && keys.length() > 100;
+    }
+
+    public static int firmwareNca(Context context) {
+        return countKenji(new File(appPath(context), "bis/system/Contents/registered"));
+    }
+
+    public static String statusLine(Context context) {
+        File keys = new File(appPath(context), "system/prod.keys");
+        int nca = firmwareNca(context);
+        String k = keys.isFile() && keys.length() > 100
+                ? ("ключи " + (keys.length() / 1024) + " КБ")
+                : "нет ключей";
+        String f = nca >= 10 ? ("прошивка " + nca + " NCA") : "нет прошивки в bis/";
+        return k + " · " + f;
+    }
+
+    public static boolean looksLikeData(File f) {
+        return looksData(f);
+    }
+
     public static String statusJson(Context context) {
         ensure(context);
         File dest = appPath(context);

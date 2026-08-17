@@ -38,7 +38,8 @@ public final class GameShelf {
             o.put("cheats", listCheats(app, eden, tid));
             o.put("dlc", listDlc(app, tid));
             o.put("saves", listSaves(app, eden, tid));
-            o.put("presets", new JSONArray(new JSONObject(SettingsBank.listJson(c, tid)).optJSONArray("items")));
+            JSONArray presetItems = new JSONObject(SettingsBank.listJson(c, tid)).optJSONArray("items");
+            o.put("presets", presetItems == null ? new JSONArray() : presetItems);
             o.put("hint", "Моды Kenji: mods/contents/" + tid
                     + " · Eden: load/" + tid
                     + " · читы: cheats/ · DLC ставится в их Kenji · сейвы: bis/user/save");

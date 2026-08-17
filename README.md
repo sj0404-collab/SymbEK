@@ -6,16 +6,15 @@
 
 ## Что внутри
 
-- Тот же player, что уже запускает Blade Chimera на itel S666LN в официальном приложении: `MainActivity` + `GameHost` + `MainViewModel.loadGame`.
+- Нативный лаунчер (без HTML/WebView): сетка игр, обложки, свойства.
+- Игра открывается официальным `MainActivity` через extra `bootPath` — тот же путь, которым их ярлыки запускают ROM.
 - Те же нативы: `libkenjinx.so` SHA256 `d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590`.
 - Размер APK ~48 МБ, как у оригинала. После установки Android разворачивает OAT — ожидайте сотни мегабайт, как у их Kenji.
 
 ## Данные
 
-Ключи и прошивка в APK не входят. В приложении укажите папку игр и поставьте прошивку так же, как в официальном Kenji. Общий дамп: `system/prod.keys` и `bis/system/Contents/registered/{id}.nca/00`.
-
-Поверх оригинала — React-библиотека (`web/`): список игр в WebView, запуск идёт в официальный `MainActivity` / `LAUNCH_GAME`. Ядро и DEX Kenji не вырезаются.
+Ключи и прошивка в APK не входят. Укажите папку игр («Папка») и при необходимости корень Eden («Данные»). Автомост кладёт `system/prod.keys` и `bis/system/Contents/registered/{id}.nca/00` туда, куда смотрит официальный GameHost.
 
 ## Сборка
 
-`.github/workflows/build.yml` скачивает официальный APK 49840045 байт, переклеивает package на `dev.symbiosis.kenji` через apktool (DEX и `.so` не трогает) и подписывает постоянным ключом.
+`.github/workflows/build.yml` скачивает официальный APK 49840045 байт, переклеивает package на `dev.symbiosis.kenji` через apktool (DEX и `.so` не трогает), вшивает нативную оболочку как `classes4.dex` и подписывает постоянным ключом.

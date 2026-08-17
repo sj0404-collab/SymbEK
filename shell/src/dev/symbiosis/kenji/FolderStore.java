@@ -6,123 +6,193 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Uri;
+import android.preference.PreferenceManager;
 import android.provider.DocumentsContract;
-import org.json.JSONArray;
-import org.json.JSONObject;
-import java.util.HashSet;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
+/**
+ * Game folders: ours, plus the official {@code gameFolder} so a folder
+ * already added in Kenji-NX is not lost when the launcher changes.
+ */
 public final class FolderStore {
     private static final String PREF = "kenji_folders";
+    private static final Pattern TID = Pattern.compile("(?i)\\[?(0100[0-9A-F]{12})\\]?");
 
     private FolderStore() {}
 
-    public static String json(Context context) {
-        JSONArray arr = new JSONArray();
-        for (String uri : uris(context)) {
-            try {
-                String name = uri.substring(uri.lastIndexOf('/') + 1);
-                int games = 0;
-                Uri tree = Uri.parse(uri);
-                Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(
-                        tree, DocumentsContract.getTreeDocumentId(tree));
-                Cursor c = context.getContentResolver().query(
-                        children, new String[]{DocumentsContract.Document.COLUMN_DISPLAY_NAME},
-                        null, null, null);
-                if (c != null) {
-                    while (c.moveToNext()) {
-                        String n = c.getString(0);
-                        if (isRom(n)) games++;
-                    }
-                    c.close();
-                }
-                arr.put(new JSONObject().put("uri", uri).put("name", name).put("games", games));
-            } catch (Exception ignored) {
+    public static List<GameItem> listGames(Context context) {
+        LinkedHashSet<String> seen = new LinkedHashSet<String>();
+        List<GameItem> out = new ArrayList<GameItem>();
+        for (String uri : allFolderUris(context)) {
+            if (uri.startsWith("/")) {
+                collectFileDir(new File(uri), seen, out);
+            } else {
+                collectTree(context, uri, seen, out);
             }
         }
-        try {
-            return new JSONObject().put("folders", arr).toString();
-        } catch (Exception e) {
-            return "{\"folders\":[]}";
-        }
-    }
-
-    public static String gamesJson(Context context) {
-        JSONArray arr = new JSONArray();
-        for (String uri : uris(context)) {
-            try {
-                Uri tree = Uri.parse(uri);
-                String docId = DocumentsContract.getTreeDocumentId(tree);
-                Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId);
-                ContentResolver cr = context.getContentResolver();
-                Cursor c = cr.query(children, new String[]{
-                        DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                        DocumentsContract.Document.COLUMN_SIZE
-                }, null, null, null);
-                if (c == null) continue;
-                while (c.moveToNext()) {
-                    String id = c.getString(0);
-                    String name = c.getString(1);
-                    long size = c.getLong(2);
-                    if (!isRom(name)) continue;
-                    Uri file = DocumentsContract.buildDocumentUriUsingTree(tree, id);
-                    arr.put(new JSONObject()
-                            .put("title", name.contains(".") ? name.substring(0, name.lastIndexOf('.')) : name)
-                            .put("path", file.toString())
-                            .put("fileSize", human(size)));
-                }
-                c.close();
-            } catch (Exception ignored) {
+        Collections.sort(out, new Comparator<GameItem>() {
+            @Override public int compare(GameItem a, GameItem b) {
+                return a.title.compareToIgnoreCase(b.title);
             }
-        }
-        try {
-            return new JSONObject().put("games", arr).toString();
-        } catch (Exception e) {
-            return "{\"games\":[]}";
-        }
+        });
+        return out;
     }
 
     public static void add(Context context, Uri uri) {
+        if (uri == null) return;
         try {
             context.getContentResolver().takePersistableUriPermission(
-                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
         } catch (Exception ignored) {
         }
         SharedPreferences p = context.getSharedPreferences(PREF, Context.MODE_PRIVATE);
-        Set<String> next = new HashSet<>(uris(context));
+        Set<String> next = new LinkedHashSet<String>(uris(context));
         next.add(uri.toString());
+        String real = DataSeed.treeToPath(uri);
+        if (real != null) next.add(real);
+        p.edit().putStringSet("uris", next).commit();
+        // Keep official Kenji's own library pointed at the same folder.
+        try {
+            PreferenceManager.getDefaultSharedPreferences(context)
+                    .edit()
+                    .putString("gameFolder", uri.toString())
+                    .commit();
+        } catch (Exception ignored) {
+        }
+        if (real != null) {
+            File maybeData = new File(real);
+            if (DataSeed.looksLikeData(maybeData) || new File(maybeData, "files").isDirectory()) {
+                DataSeed.setUserRoot(context, real);
+            }
+        }
+    }
+
+    public static void addPath(Context context, String path) {
+        if (path == null || path.isEmpty()) return;
+        File f = new File(path);
+        if (!f.isDirectory()) return;
+        SharedPreferences p = context.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+        Set<String> next = new LinkedHashSet<String>(uris(context));
+        next.add(f.getAbsolutePath());
         p.edit().putStringSet("uris", next).commit();
     }
 
-    public static String remove(Context context, String uri) {
-        SharedPreferences p = context.getSharedPreferences(PREF, Context.MODE_PRIVATE);
-        Set<String> next = new HashSet<>(uris(context));
-        next.remove(uri);
-        p.edit().putStringSet("uris", next).commit();
+    public static int folderCount(Context context) {
+        return allFolderUris(context).size();
+    }
+
+    private static Set<String> allFolderUris(Context context) {
+        LinkedHashSet<String> out = new LinkedHashSet<String>();
+        out.addAll(uris(context));
         try {
-            return new JSONObject().put("ok", true).put("message", "папка убрана").toString();
-        } catch (Exception e) {
-            return "{\"ok\":true}";
+            String official = PreferenceManager.getDefaultSharedPreferences(context)
+                    .getString("gameFolder", "");
+            if (official != null && !official.isEmpty()) out.add(official);
+        } catch (Exception ignored) {
         }
+        File user = DataSeed.userRoot(context);
+        if (user != null) {
+            // User-picked data root may sit next to the dumps.
+            File parent = user.getParentFile();
+            if (parent != null) out.add(parent.getAbsolutePath());
+            out.add(user.getAbsolutePath());
+        }
+        return out;
+    }
+
+    private static void collectFileDir(File dir, Set<String> seen, List<GameItem> out) {
+        if (dir == null || !dir.isDirectory()) return;
+        File[] kids = dir.listFiles();
+        if (kids == null) return;
+        for (File f : kids) {
+            if (f.isDirectory()) {
+                // one level only — do not walk the whole card
+                File[] inner = f.listFiles();
+                if (inner == null) continue;
+                for (File g : inner) {
+                    if (g.isFile() && isRom(g.getName())) addFile(g, seen, out);
+                }
+            } else if (isRom(f.getName())) {
+                addFile(f, seen, out);
+            }
+        }
+    }
+
+    private static void collectTree(Context context, String uriString, Set<String> seen, List<GameItem> out) {
+        try {
+            Uri tree = Uri.parse(uriString);
+            String docId = DocumentsContract.getTreeDocumentId(tree);
+            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId);
+            ContentResolver cr = context.getContentResolver();
+            Cursor c = cr.query(children, new String[]{
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_SIZE
+            }, null, null, null);
+            if (c == null) return;
+            while (c.moveToNext()) {
+                String id = c.getString(0);
+                String name = c.getString(1);
+                long size = c.getLong(2);
+                if (!isRom(name)) continue;
+                Uri file = DocumentsContract.buildDocumentUriUsingTree(tree, id);
+                String real = OfficialLaunch.resolvePath(context, file.toString());
+                String path = (real != null && real.startsWith("/") && new File(real).isFile())
+                        ? real : file.toString();
+                if (!seen.add(path)) continue;
+                out.add(new GameItem(prettyTitle(name), path, titleIdOf(name), human(size), name));
+            }
+            c.close();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static void addFile(File f, Set<String> seen, List<GameItem> out) {
+        String path = f.getAbsolutePath();
+        if (!seen.add(path)) return;
+        out.add(new GameItem(prettyTitle(f.getName()), path, titleIdOf(f.getName()), human(f.length()), f.getName()));
     }
 
     private static Set<String> uris(Context context) {
         Set<String> set = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
                 .getStringSet("uris", null);
-        return set == null ? new HashSet<String>() : new HashSet<String>(set);
+        return set == null ? new LinkedHashSet<String>() : new LinkedHashSet<String>(set);
     }
 
-    private static boolean isRom(String name) {
+    static boolean isRom(String name) {
         if (name == null) return false;
-        String n = name.toLowerCase();
-        return n.endsWith(".nsp") || n.endsWith(".xci") || n.endsWith(".nro");
+        String n = name.toLowerCase(Locale.US);
+        return n.endsWith(".nsp") || n.endsWith(".xci") || n.endsWith(".nro")
+                || n.endsWith(".nsz") || n.endsWith(".xcz");
     }
 
-    private static String human(long n) {
+    static String prettyTitle(String name) {
+        if (name == null) return "игра";
+        int dot = name.lastIndexOf('.');
+        String stem = dot > 0 ? name.substring(0, dot) : name;
+        return stem.replace('_', ' ').trim();
+    }
+
+    static String titleIdOf(String name) {
+        if (name == null) return "";
+        Matcher m = TID.matcher(name);
+        return m.find() ? m.group(1).toUpperCase(Locale.US) : "";
+    }
+
+    static String human(long n) {
         if (n <= 0) return "";
         if (n < 1024L * 1024) return (n / 1024) + " КБ";
         if (n < 1024L * 1024 * 1024) return (n / (1024 * 1024)) + " МБ";
-        return String.format("%.1f ГБ", n / (1024.0 * 1024 * 1024));
+        return String.format(Locale.US, "%.1f ГБ", n / (1024.0 * 1024 * 1024));
     }
 }
