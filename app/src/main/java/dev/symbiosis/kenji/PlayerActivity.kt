@@ -6,7 +6,9 @@ import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
 import android.os.ParcelFileDescriptor
+import android.os.Process
 import android.text.InputType
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -27,6 +29,7 @@ import java.util.TimeZone
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import org.kenjinx.android.Kenji
 import org.kenjinx.android.KenjinxCore
@@ -119,7 +122,7 @@ class PlayerActivity : Activity() {
             )
         )
 
-        val pad = TouchPad(this, Kenji.core) { showMenu() }.apply {
+        val pad = TouchPad(this) { showMenu() }.apply {
             opacity = SettingsStore(this@PlayerActivity).int("overlayOpacity", 70)
             controlsVisible = SettingsStore(this@PlayerActivity)
                 .bool("showOverlay", true)
@@ -310,6 +313,8 @@ class PlayerActivity : Activity() {
                 "deviceInitialize отказал: ${deviceInitError.ifBlank { "нет контекста эмуляции" }}"
             )
         }
+        firmwareInfo = firmwareVersion(core, DataRoot.kenjiHome())
+        updateHud()
         // Install the real Android UI handler before the game can request a
         // software keyboard or confirmation dialog. The loader itself can
         // block on updateUiHandler until we call uiHandlerSetResponse.
@@ -349,6 +354,7 @@ class PlayerActivity : Activity() {
         }
         core.inputSetClientSize(width, height)
         playing = true
+        touchPad?.inputEnabled = true
         firmwareInfo = firmwareVersion(core, home)
         progressText = if (port >= 0) "шейдеры инициализируются" else "геймпад не подключился; touch доступен"
         startInputPump(core)
@@ -385,6 +391,10 @@ class PlayerActivity : Activity() {
             )
         }
         File(home, "Logs").mkdirs()
+        // .NET also tries ~/.config/Ryujinx/Logs; create the writable
+        // Android equivalents so the warning is not the only log we have.
+        runCatching { File(filesDir, ".config/Ryujinx/Logs").mkdirs() }
+        runCatching { File(getExternalFilesDir(null), ".config/Ryujinx/Logs").mkdirs() }
     }
 
     private fun showDataStatus(home: File) {
@@ -403,10 +413,42 @@ class PlayerActivity : Activity() {
             throw IllegalStateException("не удалось подключить JavaVM к официальному JNI")
         }
 
-        val data = home.absolutePath
-        // Do not hide firmware during init: ReloadFilesystem after a stash
-        // can leave ContentManager empty and LoadApplication never returns.
-        val initialized = core.javaInitialize(data, JNIEnv.CURRENT)
+        val junk = FirmwareBridge.quarantineJunk(home)
+        val nca = FirmwareBridge.kenjiNcaCount(home)
+        progressText = "javaInitialize · $nca NCA" +
+            if (junk > 0) " · убрал $junk битых" else ""
+        updateHud()
+
+        // SwitchDevice parses every NCA on first init. One bad file →
+        // javaInitialize returns false and VirtualFileSystem cannot be
+        // created again in this process. 1.0.12 hid firmware and init
+        // succeeded. 1.0.15 stopped hiding it and init died on this
+        // phone's 234-NCA tree. Stash, init, restore; ReinitEmulation
+        // after that rescans bis/ into ContentManager.
+        val registered = FirmwareBridge.kenjiRegistered(home)
+        val stashed = File(registered.parentFile, "registered.stash")
+        val hadFw = FirmwareBridge.kenjiReady(home)
+        if (hadFw && registered.isDirectory) {
+            if (stashed.exists()) stashed.deleteRecursively()
+            if (!registered.renameTo(stashed)) {
+                throw IllegalStateException(
+                    "не удалось временно убрать прошивку перед javaInitialize"
+                )
+            }
+        }
+
+        val initialized = try {
+            javaInitializeOnUi(core, home.absolutePath)
+        } finally {
+            if (stashed.isDirectory) {
+                if (registered.exists()) registered.deleteRecursively()
+                if (!stashed.renameTo(registered)) {
+                    throw IllegalStateException(
+                        "не удалось вернуть прошивку после javaInitialize"
+                    )
+                }
+            }
+        }
         if (!initialized) {
             val log = lastKenjiLog(home)
             throw IllegalStateException(
@@ -417,6 +459,26 @@ class PlayerActivity : Activity() {
         }
         javaReady.set(true)
         GameInfoReader.coreIsUp()
+    }
+
+    private fun javaInitializeOnUi(core: KenjinxCore, data: String): Boolean {
+        val done = CountDownLatch(1)
+        val ok = AtomicBoolean(false)
+        val error = AtomicReference<String?>(null)
+        runOnUiThread {
+            try {
+                ok.set(core.javaInitialize(data, JNIEnv.CURRENT))
+            } catch (t: Throwable) {
+                error.set(t.message ?: t.javaClass.simpleName)
+            } finally {
+                done.countDown()
+            }
+        }
+        if (!done.await(60, TimeUnit.SECONDS)) {
+            throw IllegalStateException("javaInitialize не вернулся за 60с")
+        }
+        error.get()?.let { throw IllegalStateException("javaInitialize: $it") }
+        return ok.get()
     }
 
     private fun deviceInitializeOnUi(core: KenjinxCore, settings: SettingsStore): Boolean {
@@ -792,10 +854,15 @@ class PlayerActivity : Activity() {
     }
 
     override fun onDestroy() {
+        touchPad?.inputEnabled = false
         shutdownCore()
         gameSurface = null
         runCatching { pfd?.close() }
         super.onDestroy()
+        // VirtualFileSystem.CreateInstance can run once per process.
+        // Leaving :player alive after a failed javaInitialize makes the
+        // next launch return false immediately.
+        Process.killProcess(Process.myPid())
     }
 
     private fun leave() {
@@ -810,6 +877,7 @@ class PlayerActivity : Activity() {
             runCatching { Kenji.core.deviceSignalEmulationClose() }
         }
         playing = false
+        touchPad?.inputEnabled = false
         motion?.close()
         motion = null
         stopPumps()
@@ -838,17 +906,43 @@ class PlayerActivity : Activity() {
         progressText = message
         updateHud()
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-        if (!isFinishing) status.postDelayed({ finish() }, 8_000)
+        touchPad?.inputEnabled = false
+        if (!isFinishing) {
+            status.postDelayed({
+                finish()
+                Process.killProcess(Process.myPid())
+            }, 12_000)
+        }
     }
 
     private fun lastKenjiLog(home: File): String {
-        val dir = File(home, "Logs")
-        val file = dir.listFiles()?.filter { it.isFile }?.maxByOrNull { it.lastModified() }
-            ?: return ""
-        return runCatching { file.readText().takeLast(700) }
-            .getOrDefault("")
+        val candidates = listOf(
+            File(home, "Logs"),
+            File(filesDir, ".config/Ryujinx/Logs"),
+            File(getExternalFilesDir(null), ".config/Ryujinx/Logs")
+        )
+        val file = candidates.flatMap { dir ->
+            dir.listFiles()?.filter { it.isFile }.orEmpty().toList()
+        }.maxByOrNull { it.lastModified() } ?: return ""
+        val text = runCatching { file.readText() }.getOrDefault("")
+        val useful = text.lineSequence()
+            .filter { line ->
+                line.contains("|E|") ||
+                    line.contains("Exception") ||
+                    line.contains("Initializing") ||
+                    line.contains("base path", ignoreCase = true) ||
+                    line.contains("Firmware", ignoreCase = true) ||
+                    line.contains("failed", ignoreCase = true) ||
+                    line.contains("|W|")
+            }
+            .toList()
+            .takeLast(6)
+            .joinToString(" · ")
             .replace('\n', ' ')
             .trim()
+        return useful.ifBlank {
+            text.takeLast(240).replace('\n', ' ').trim()
+        }
     }
 
     private fun humanBytes(bytes: Long): String = when {
@@ -915,14 +1009,32 @@ class PlayerActivity : Activity() {
     private fun openRom(path: String): ParcelFileDescriptor? = runCatching {
         // Official FileStream opens the descriptor ReadWrite. A read-only
         // fd makes the .NET host block inside deviceLoadDescriptor.
-        if (path.startsWith("/")) {
-            runCatching {
-                ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_WRITE)
-            }.getOrNull() ?: ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_ONLY)
-        } else {
-            val uri = Uri.parse(path)
-            contentResolver.openFileDescriptor(uri, "rw")
-                ?: contentResolver.openFileDescriptor(uri, "r")
+        val file = if (path.startsWith("/")) File(path) else resolveContentFile(Uri.parse(path))
+        if (file != null && file.isFile) {
+            return@runCatching runCatching {
+                ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_WRITE)
+            }.getOrNull() ?: ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
         }
+        val uri = Uri.parse(path)
+        contentResolver.openFileDescriptor(uri, "rw")
+            ?: contentResolver.openFileDescriptor(uri, "r")
     }.getOrNull()
+
+    /**
+     * SAF gives us content://. Official Kenji opens a real path ReadWrite.
+     * Recover /storage/emulated/0/... from the usual ExternalStorage provider.
+     */
+    private fun resolveContentFile(uri: Uri): File? {
+        val decoded = Uri.decode(uri.toString())
+        val marker = "primary:"
+        val idx = decoded.indexOf(marker)
+        if (idx >= 0) {
+            val rel = decoded.substring(idx + marker.length)
+                .substringBefore('?')
+                .substringBefore('#')
+            val file = File(Environment.getExternalStorageDirectory(), rel)
+            if (file.isFile) return file
+        }
+        return null
+    }
 }

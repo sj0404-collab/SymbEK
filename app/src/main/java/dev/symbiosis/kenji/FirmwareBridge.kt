@@ -31,6 +31,64 @@ object FirmwareBridge {
 
     fun kenjiReady(root: File): Boolean = kenjiNcaCount(root) >= 10
 
+    /**
+     * A previous javaInitialize stash that never came back leaves firmware
+     * in registered.stash and an empty registered/. Put it back before we
+     * count NCA or try to init again.
+     */
+    fun restoreOrphanStash(root: File) {
+        val registered = kenjiRegistered(root)
+        val stash = File(registered.parentFile, "registered.stash")
+        if (!stash.isDirectory) return
+        if (kenjiNcaCount(root) >= 10) {
+            stash.deleteRecursively()
+            return
+        }
+        if (registered.exists()) registered.deleteRecursively()
+        stash.renameTo(registered)
+    }
+
+    /**
+     * SwitchDevice parses every entry under registered/. Empty directories,
+     * leftover .part copies and nested 00/00 from an old bridge bug make
+     * javaInitialize return false and poison VirtualFileSystem for the
+     * whole :player process.
+     */
+    fun quarantineJunk(root: File): Int {
+        restoreOrphanStash(root)
+        val registered = kenjiRegistered(root)
+        if (!registered.isDirectory) return 0
+        val junk = File(registered.parentFile, "registered.junk")
+        junk.mkdirs()
+        var moved = 0
+        registered.listFiles()?.forEach { entry ->
+            val good = when {
+                !entry.isDirectory -> false
+                File(entry, "00").let { it.isFile && it.length() >= 0xC00 } -> true
+                File(entry, "00").isDirectory -> {
+                    val inner = File(entry, "00/00")
+                    if (inner.isFile && inner.length() >= 0xC00) {
+                        val flat = File(entry, "00.flat")
+                        if (inner.renameTo(flat)) {
+                            File(entry, "00").deleteRecursively()
+                            flat.renameTo(File(entry, "00"))
+                        }
+                        File(entry, "00").let { it.isFile && it.length() >= 0xC00 }
+                    } else {
+                        false
+                    }
+                }
+                else -> false
+            }
+            if (!good) {
+                val dest = File(junk, entry.name)
+                if (dest.exists()) dest.deleteRecursively()
+                if (entry.renameTo(dest)) moved++
+            }
+        }
+        return moved
+    }
+
     fun findSources(): List<Source> {
         val sd = Environment.getExternalStorageDirectory()
         val candidates = listOf(

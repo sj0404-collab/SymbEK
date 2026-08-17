@@ -9,15 +9,23 @@ import android.view.MotionEvent
 import android.view.View
 import kotlin.math.abs
 import kotlin.math.hypot
-import org.kenjinx.android.KenjinxCore
+import org.kenjinx.android.Kenji
 
-/** A lightweight, real virtual Switch controller and touch screen overlay. */
+/**
+ * A lightweight, real virtual Switch controller and touch screen overlay.
+ *
+ * The overlay is drawn before the core exists. Native input is forwarded
+ * only after PlayerActivity sets [inputEnabled] — calling
+ * inputSetTouchPoint before javaInitialize was ending up in the Kenji log
+ * and racing CloseEmulation.
+ */
 @SuppressLint("ViewConstructor")
 class TouchPad(
     context: Context,
-    private val core: KenjinxCore,
     private val onMenu: () -> Unit
 ) : View(context) {
+    @Volatile var inputEnabled: Boolean = false
+
     private data class Btn(
         val id: Int,
         val label: String,
@@ -167,9 +175,7 @@ class TouchPad(
                     val pointer = event.getPointerId(index)
                     when (owner[pointer]) {
                         OWNER_STICK -> moveStick(event.getX(index), event.getY(index))
-                        OWNER_GAME -> KenjiInput.touch(
-                            core, event.getX(index).toInt(), event.getY(index).toInt()
-                        )
+                        OWNER_GAME -> sendTouch(event.getX(index).toInt(), event.getY(index).toInt())
                     }
                 }
             }
@@ -205,11 +211,11 @@ class TouchPad(
         if (hit == null) {
             owner[pointer] = OWNER_GAME
             gamePointers.add(pointer)
-            KenjiInput.touch(core, x.toInt(), y.toInt())
+            sendTouch(x.toInt(), y.toInt())
             return
         }
         owner[pointer] = hit.id
-        KenjiInput.press(core, hit.id)
+        if (inputEnabled) KenjiInput.press(Kenji.core, hit.id)
     }
 
     private fun letGo(pointer: Int) {
@@ -218,16 +224,16 @@ class TouchPad(
             OWNER_MENU -> Unit
             OWNER_GAME -> {
                 gamePointers.remove(pointer)
-                if (gamePointers.isEmpty()) KenjiInput.touchRelease(core)
+                if (gamePointers.isEmpty()) releaseTouch()
             }
             OWNER_STICK -> {
                 if (stickPointer == pointer) stickPointer = -1
                 knobX = stickCx
                 knobY = stickCy
-                KenjiInput.stick(core, KenjiInput.STICK_LEFT, 0f, 0f)
+                sendStick(0f, 0f)
                 invalidate()
             }
-            else -> KenjiInput.release(core, what)
+            else -> if (inputEnabled) KenjiInput.release(Kenji.core, what)
         }
     }
 
@@ -243,23 +249,38 @@ class TouchPad(
         if (abs(dy) < 0.12f) dy = 0f
         knobX = stickCx + dx * stickR
         knobY = stickCy + dy * stickR
-        KenjiInput.stick(core, KenjiInput.STICK_LEFT, dx, dy)
+        sendStick(dx, dy)
         invalidate()
     }
 
     fun releaseAll() {
-        owner.values.forEach { what ->
-            if (what >= 0) KenjiInput.release(core, what)
+        if (inputEnabled) {
+            val core = Kenji.core
+            owner.values.forEach { what ->
+                if (what >= 0) KenjiInput.release(core, what)
+            }
+            if (gamePointers.isNotEmpty()) KenjiInput.touchRelease(core)
+            KenjiInput.stick(core, KenjiInput.STICK_LEFT, 0f, 0f)
         }
-        if (gamePointers.isNotEmpty()) KenjiInput.touchRelease(core)
         owner.clear()
         gamePointers.clear()
         stickPointer = -1
         knobX = stickCx
         knobY = stickCy
-        KenjiInput.stick(core, KenjiInput.STICK_LEFT, 0f, 0f)
         KenjiInput.clearHeld()
         invalidate()
+    }
+
+    private fun sendTouch(x: Int, y: Int) {
+        if (inputEnabled) KenjiInput.touch(Kenji.core, x, y)
+    }
+
+    private fun releaseTouch() {
+        if (inputEnabled) KenjiInput.touchRelease(Kenji.core)
+    }
+
+    private fun sendStick(x: Float, y: Float) {
+        if (inputEnabled) KenjiInput.stick(Kenji.core, KenjiInput.STICK_LEFT, x, y)
     }
 
     private companion object {
