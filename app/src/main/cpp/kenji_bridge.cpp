@@ -9,6 +9,7 @@
 #include <jni.h>
 #include <android/native_window_jni.h>
 #include <android/surface_texture.h>
+#include <android/surface_texture_jni.h>
 #include <vulkan/vulkan.h>
 #include <android/log.h>
 
