@@ -85,7 +85,10 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         )
-        pad.visibility = if (SettingsStore(this).bool("showOverlay", true)) View.VISIBLE else View.GONE
+        // Не GONE: скрытая вьюха не получает касаний, и вместе с
+        // кнопками пропал бы тачскрин игры. Панель всегда на месте,
+        // прячутся только кнопки.
+        pad.controlsVisible = SettingsStore(this).bool("showOverlay", true)
 
         root.addView(status)
         setContentView(root)
@@ -267,7 +270,7 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         val pad = touchPad ?: return
         val s = SettingsStore(this)
         val items = arrayOf(
-            if (pad.visibility == View.VISIBLE) "Скрыть управление" else "Показать управление",
+            if (pad.controlsVisible) "Скрыть управление" else "Показать управление",
             "Прозрачность кнопок: ${s.int("overlayOpacity", 70)}%",
             "Выйти из игры"
         )
@@ -276,8 +279,8 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> {
-                        val show = pad.visibility != View.VISIBLE
-                        pad.visibility = if (show) View.VISIBLE else View.GONE
+                        val show = !pad.controlsVisible
+                        pad.controlsVisible = show
                         if (!show) pad.releaseAll()
                         s.setBool("showOverlay", show)
                     }

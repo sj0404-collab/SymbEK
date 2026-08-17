@@ -136,6 +136,12 @@ class TouchPad(
     }
 
     override fun onDraw(canvas: Canvas) {
+        if (!controlsVisible) {
+            // Кнопка меню остаётся всегда, иначе управление не вернуть.
+            canvas.drawCircle(menuCx, menuCy, menuR, edge)
+            canvas.drawText("≡", menuCx, menuCy + text.textSize * 0.35f, text)
+            return
+        }
         // Стик.
         canvas.drawCircle(stickCx, stickCy, stickR, edge)
         canvas.drawCircle(knobX, knobY, stickR * 0.42f, fill)
@@ -153,7 +159,32 @@ class TouchPad(
     private companion object {
         const val OWNER_STICK = -2
         const val OWNER_MENU = -3
+
+        /**
+         * Касание, которое ушло В ИГРУ, а не в кнопку.
+         *
+         * Без него тачскрина у игры не было вовсе: onTouchEvent всегда
+         * возвращал true, то есть панель съедала КАЖДОЕ касание экрана,
+         * а KenjiInput.touch() не звал никто - функция была написана и
+         * осталась мёртвой. Меню, инвентарь и всё, что на Switch тыкают
+         * пальцем, не работало.
+         */
+        const val OWNER_GAME = -4
     }
+
+    /**
+     * Показывать ли кнопки.
+     *
+     * Не View.GONE: скрытая вьюха не получает касаний, и тогда игра
+     * тоже осталась бы без тачскрина. Панель остаётся на месте, просто
+     * перестаёт рисовать и ловить кнопки - все касания уходят в игру.
+     */
+    var controlsVisible: Boolean = true
+        set(value) {
+            field = value
+            if (!value) releaseAll()
+            invalidate()
+        }
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -165,7 +196,12 @@ class TouchPad(
             MotionEvent.ACTION_MOVE -> {
                 for (i in 0 until event.pointerCount) {
                     val id = event.getPointerId(i)
-                    if (owner[id] == OWNER_STICK) moveStick(event.getX(i), event.getY(i))
+                    when (owner[id]) {
+                        OWNER_STICK -> moveStick(event.getX(i), event.getY(i))
+                        OWNER_GAME -> KenjiInput.touch(
+                            core, event.getX(i).toInt(), event.getY(i).toInt()
+                        )
+                    }
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
@@ -182,7 +218,7 @@ class TouchPad(
             onMenu()
             return
         }
-        if (hypot(x - stickCx, y - stickCy) <= stickR * 1.25f) {
+        if (controlsVisible && hypot(x - stickCx, y - stickCy) <= stickR * 1.25f) {
             owner[pointer] = OWNER_STICK
             stickPointer = pointer
             moveStick(x, y)
@@ -191,7 +227,16 @@ class TouchPad(
         // Радиус попадания чуть больше нарисованного: пальцем в точный
         // круг не попадают, и «кнопка не нажалась» - самая частая жалоба
         // на экранное управление.
-        val hit = buttons.firstOrNull { hypot(x - it.cx, y - it.cy) <= it.r * 1.35f } ?: return
+        val hit = if (controlsVisible) {
+            buttons.firstOrNull { hypot(x - it.cx, y - it.cy) <= it.r * 1.35f }
+        } else null
+
+        if (hit == null) {
+            // Мимо кнопок - значит это тычок по самой игре.
+            owner[pointer] = OWNER_GAME
+            KenjiInput.touch(core, x.toInt(), y.toInt())
+            return
+        }
         owner[pointer] = hit.id
         KenjiInput.press(core, hit.id)
     }
@@ -200,6 +245,7 @@ class TouchPad(
         val what = owner.remove(pointer) ?: return
         when (what) {
             OWNER_MENU -> Unit
+            OWNER_GAME -> KenjiInput.touchRelease(core)
             OWNER_STICK -> {
                 stickPointer = -1
                 knobX = stickCx
@@ -226,9 +272,12 @@ class TouchPad(
 
     /** Отпустить всё: вызывается при сворачивании, иначе кнопка «залипнет». */
     fun releaseAll() {
+        var hadGameTouch = false
         owner.values.forEach { what ->
             if (what >= 0) KenjiInput.release(core, what)
+            if (what == OWNER_GAME) hadGameTouch = true
         }
+        if (hadGameTouch) KenjiInput.touchRelease(core)
         owner.clear()
         stickPointer = -1
         knobX = stickCx
