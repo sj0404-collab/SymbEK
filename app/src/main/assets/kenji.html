@@ -1633,10 +1633,22 @@ function openUtilitiesSheet(note) {
     '<div class="note">Kenji bis: ' + (br.kenjiNcas || 0) + ' NCA' + (br.kenjiReady ? ' · готово' : ' · пусто') + '</div>' +
     (srcs || '<div class="note">распакованную прошивку Eden пока не вижу</div>') +
     (note ? '<div class="logline"><div class="ok">' + esc(note) + '</div></div>' : '') +
+    '<div style="margin-top:10px;font-weight:600">Моды</div>' +
+    (function () {
+      var md = parse(call('mods'), { items: [] });
+      var list = (md.items || []).map(function (m) {
+        return '<div class="logline"><div class="' + (m.active ? 'ok' : 'wh') + '">' +
+          esc(m.titleId) + ' · ' + (m.mods || 0) + ' шт · ' + esc(m.source || '') + '</div>' +
+          '<div class="wh">' + esc(m.detail || '') + '</div></div>';
+      }).join('');
+      return (list || '<div class="note">модов не нашёл</div>') +
+        (md.note ? '<div class="note">' + esc(md.note) + '</div>' : '');
+    })() +
     '<div style="margin-top:10px;font-weight:600">Корень данных</div>' +
     '<div class="note">' + esc(roots.current || st.dataRoot || '') + '</div>' + sug;
   $('sheet-actions').innerHTML =
-    '<button class="ghost" id="u-bridge">Мост Eden</button>' +
+    '<button class="ghost" id="u-bridge">Мост прошивки</button>' +
+    '<button class="ghost" id="u-mods">Мост модов</button>' +
     '<button class="ghost" id="u-data">Папка данных</button>' +
     '<button class="ghost" id="u-keys">Ключи prod.keys</button>' +
     '<button class="ghost" id="u-fw">Прошивка zip/xci</button>' +
@@ -1648,6 +1660,11 @@ function openUtilitiesSheet(note) {
     $('sheet-note').innerHTML = '<div class="note">раскладываю NCA в bis/… если ссылки не выйдут — будет копия, подождите</div>';
     const r = parse(call('bridgeFirmware'), { message: 'нет моста' });
     loadStatus();
+    openUtilitiesSheet(r.message || '');
+  };
+  $('u-mods').onclick = () => {
+    $('sheet-note').innerHTML = '<div class="note">связываю моды load/ → mods/contents…</div>';
+    const r = parse(call('bridgeMods'), { message: 'нет моста модов' });
     openUtilitiesSheet(r.message || '');
   };
   $('u-data').onclick = () => { if (N() && N().pickDataRoot) N().pickDataRoot(); };

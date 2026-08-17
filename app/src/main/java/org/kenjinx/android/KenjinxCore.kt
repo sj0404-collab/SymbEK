@@ -84,6 +84,14 @@ interface KenjinxCore : Library {
     fun deviceGetInstalledFirmwareVersion(): String
     fun deviceReloadFilesystem()
     fun deviceReinitEmulation()
+
+    // Название, издатель, версия и обложка одним вызовом. Сигнатура
+    // сверена с KenjinxNativeJna: (I Ljava/lang/String; GameInfo)V.
+    fun deviceGetGameInfo(
+        fileDescriptor: Int,
+        extension: String,
+        info: dev.symbiosis.kenji.GameInfoReader.GameInfo
+    )
 }
 
 object Kenji {

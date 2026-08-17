@@ -72,6 +72,9 @@ object DataRoot {
         seedKeysIntoKenji(root)
         // If bis/ is empty, pull Eden's registered NCAs into Kenji layout.
         if (!FirmwareBridge.kenjiReady(root)) FirmwareBridge.auto(root)
+        // То же для модов: load/ (Eden) → mods/contents/ (Kenji).
+        // Ссылками, поэтому второй копии на диске не появляется.
+        runCatching { ModBridge.auto(root, allowCopy = false) }
     }
 
     /** Copy prod.keys / title.keys from Eden-style or Kenji-style locations. */

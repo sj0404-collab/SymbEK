@@ -93,8 +93,9 @@ object FirmwareBridge {
         var failed = 0
         var bytes = 0L
         var mode = "link"
-        for (src in srcNcas) {
-            val destDir = File(destRoot, src.name)
+        for (entry in srcNcas) {
+            val src = entry.file
+            val destDir = File(destRoot, entry.entryName)
             val dest = File(destDir, "00")
             if (dest.isFile && dest.length() == src.length() && dest.length() > 0) {
                 skipped++
@@ -184,16 +185,39 @@ object FirmwareBridge {
     }
 
     /** Loose .nca files, or already-Ryujinx {id}.nca/00 directories. */
-    private fun collectEdenNcas(dir: File): List<File> {
+    /**
+     * Найденный NCA и ИМЯ, под которым его ждёт Kenji.
+     *
+     * Раньше возвращался просто File, а имя папки бралось как
+     * `src.name`. Для россыпи `abcdef.nca` это верно, но если исходная
+     * папка уже в раскладке Ryujinx (`abcdef.nca/00`), то найденным
+     * файлом оказывался сам `00`, и мост создавал `bis/.../00/00`.
+     * Прошивка после такого не читалась, а счётчик показывал успех:
+     * countKenjiLayout считает любые каталоги с непустым `00` внутри.
+     *
+     * Теперь имя каталога хранится рядом с файлом и берётся у родителя,
+     * когда файл называется `00`.
+     */
+    private data class Nca(val file: File, val entryName: String)
+
+    private fun collectEdenNcas(dir: File): List<Nca> {
         if (!dir.isDirectory) return emptyList()
-        val out = ArrayList<File>()
+        val out = ArrayList<Nca>()
         dir.listFiles()?.forEach { f ->
             when {
-                f.isFile && f.name.endsWith(".nca", true) && f.length() > 1000 -> out.add(f)
+                f.isFile && f.name.endsWith(".nca", true) && f.length() > 1000 ->
+                    out.add(Nca(f, f.name))
+
                 f.isDirectory && f.name.endsWith(".nca", true) -> {
+                    // Уже раскладка Ryujinx: {id}.nca/00. Имя записи -
+                    // имя КАТАЛОГА, а не файла внутри.
                     val inner = File(f, "00")
-                    if (inner.isFile && inner.length() > 1000) out.add(inner)
-                    else f.listFiles()?.firstOrNull { it.isFile && it.length() > 1000 }?.let { out.add(it) }
+                    if (inner.isFile && inner.length() > 1000) {
+                        out.add(Nca(inner, f.name))
+                    } else {
+                        f.listFiles()?.firstOrNull { it.isFile && it.length() > 1000 }
+                            ?.let { out.add(Nca(it, f.name)) }
+                    }
                 }
             }
         }

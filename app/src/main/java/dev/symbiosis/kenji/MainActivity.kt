@@ -194,7 +194,30 @@ class MainActivity : AppCompatActivity() {
             JSONObject().put("ok", false).put("message", t.message ?: "мост упал").toString()
         }
         @JavascriptInterface fun folders(): String = folders.json()
-        @JavascriptInterface fun games(): String = folders.gamesJson()
+        /**
+         * Список игр с настоящими названиями.
+         *
+         * FolderStore берёт заголовок из имени файла, и в списке висело
+         * «Blade Chimera [01007FC01CF4E000][v0] (0.28 GB)». Ядро знает
+         * настоящее имя, издателя и версию - подставляем их, когда файл
+         * читается. Если ключей нет, остаётся имя файла: это лучше, чем
+         * пустая строка.
+         */
+        @JavascriptInterface fun games(): String = runCatching {
+            val src = JSONObject(folders.gamesJson())
+            val arr = src.optJSONArray("games") ?: JSONArray()
+            for (i in 0 until arr.length()) {
+                val g = arr.optJSONObject(i) ?: continue
+                val path = g.optString("path")
+                if (path.isBlank()) continue
+                val info = GameInfoReader.read(this@MainActivity, path) ?: continue
+                if (info.title.isNotBlank()) g.put("title", info.title)
+                if (info.titleId.isNotBlank()) g.put("titleId", info.titleId)
+                if (info.developer.isNotBlank()) g.put("developer", info.developer)
+                if (info.version.isNotBlank()) g.put("version", info.version)
+            }
+            src.put("games", arr).toString()
+        }.getOrElse { folders.gamesJson() }
         @JavascriptInterface fun pickFolder() { main.post { pickFolder.launch(null) } }
         @JavascriptInterface fun removeFolder(uri: String): String = folders.remove(uri)
         @JavascriptInterface fun plugins(): String = plugins.listJson()
@@ -222,38 +245,89 @@ class MainActivity : AppCompatActivity() {
             DataRoot.configured = null
         }
 
+        /**
+         * Откуда берутся сохранения.
+         *
+         * Считало каталоги с именем длиной ровно 32 символа - у Kenji
+         * таких нет вовсе, так что «титулов» всегда было 0. Ядро держит
+         * сейвы в bis/user/save/<число>/, поэтому считаем именно их,
+         * а размер показываем настоящий.
+         */
         @JavascriptInterface
         fun saveSource(): String {
             val root = DataRoot.resolve()
-            val bis = File(root, "bis")
+            val dir = File(root, "bis/user/save")
+            val slots = dir.listFiles()?.filter { it.isDirectory } ?: emptyList()
+            val bytes = slots.sumOf { d -> d.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
             return JSONObject()
-                .put("path", root)
+                .put("path", dir.absolutePath)
                 .put("name", File(root).name)
-                .put("titles", bis.walkTopDown().count { it.isDirectory && it.name.length == 32 })
-                .put("size", "")
+                .put("titles", slots.size)
+                .put("size", human(bytes))
                 .toString()
         }
 
+        /**
+         * Список сохранений.
+         *
+         * Обходило всё дерево bis/ на 4 уровня и вываливало каждую папку
+         * подряд - включая system/Contents и служебные каталоги ядра.
+         * Смотрим только туда, где сейвы и лежат.
+         */
         @JavascriptInterface fun saves(): String {
-            val root = File(DataRoot.resolve(), "bis")
+            val dir = File(DataRoot.resolve(), "bis/user/save")
             val items = JSONArray()
-            if (root.isDirectory) {
-                root.walkTopDown().maxDepth(4).forEach { f ->
-                    if (f.isDirectory && f != root && (f.listFiles()?.any { it.isFile } == true)) {
-                        items.put(JSONObject().put("name", f.name).put("detail", f.absolutePath))
-                    }
-                }
+            dir.listFiles()?.filter { it.isDirectory }?.sortedBy { it.name }?.forEach { slot ->
+                val bytes = slot.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                if (bytes <= 0L) return@forEach
+                items.put(
+                    JSONObject()
+                        .put("name", "слот " + slot.name)
+                        .put("detail", human(bytes) + " · " + slot.absolutePath)
+                        .put("bytes", bytes)
+                )
             }
-            return JSONObject().put("path", root.absolutePath).put("items", items).toString()
+            val edenSaves = File(DataRoot.resolve(), "nand/user/save")
+            return JSONObject()
+                .put("path", dir.absolutePath)
+                .put("items", items)
+                .put("edenPath", if (edenSaves.isDirectory) edenSaves.absolutePath else "")
+                .put(
+                    "note",
+                    if (items.length() == 0 && edenSaves.isDirectory)
+                        "здесь пусто, но рядом есть сейвы Eden (nand/user/save). " +
+                        "Kenji их не читает: у него свой индекс сохранений."
+                    else ""
+                )
+                .toString()
         }
 
-        @JavascriptInterface fun mods(): String =
-            JSONObject().put("path", "").put("items", JSONArray()).toString()
+        /**
+         * Моды. Раньше возвращалось `{"path":"","items":[]}` - панель
+         * честно показывала «модов нет», даже когда они лежали в load/.
+         */
+        @JavascriptInterface fun mods(): String = ModBridge.listJson()
+
+        /** Разложить моды Eden (load/) в вид Kenji (mods/contents/). */
+        @JavascriptInterface fun bridgeMods(): String = try {
+            ModBridge.auto(File(DataRoot.resolve()), allowCopy = true).toString()
+        } catch (t: Throwable) {
+            JSONObject().put("ok", false).put("message", t.message ?: "мост модов упал").toString()
+        }
 
         @JavascriptInterface fun keysOk(): Boolean = DataRoot.keysPresent()
         @JavascriptInterface fun files(uriString: String): String = folders.filesJson(uriString)
-        @JavascriptInterface fun icon(path: String): String = ""
-        @JavascriptInterface fun cover(path: String): String = ""
+        // Обложка из ядра (deviceGetGameInfo), а не пустая строка.
+        // cover и icon - одна и та же картинка: у Switch отдельной
+        // «широкой» обложки в файле нет, врать про неё нечем.
+        @JavascriptInterface fun icon(path: String): String =
+            runCatching { GameInfoReader.icon(this@MainActivity, path) }.getOrDefault("")
+        @JavascriptInterface fun cover(path: String): String =
+            runCatching { GameInfoReader.icon(this@MainActivity, path) }.getOrDefault("")
+        /** Что ядро знает о файле - для разбора «почему игра не читается». */
+        @JavascriptInterface fun gameInfo(path: String): String =
+            runCatching { GameInfoReader.json(this@MainActivity, path) }
+                .getOrDefault(JSONObject().put("ok", false).toString())
         @JavascriptInterface fun shot(path: String): String = encodeJpeg(path)
         @JavascriptInterface fun shots(path: String, title: String): String = shotsJson()
         @JavascriptInterface fun memory(): String = memoryJson()
@@ -285,8 +359,48 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface fun deleteConverted(path: String): String = Inbox.delete(path)
         @JavascriptInterface fun canOpen(path: String): Boolean = Inbox.canOpen(path)
         @JavascriptInterface fun convertQueue(): String = Inbox.queueJson()
-        @JavascriptInterface fun readText(path: String): String = JSONObject().put("ok", false).put("reason", "нет").toString()
-        @JavascriptInterface fun adoptSave(path: String, title: String): String = JSONObject().put("ok", true).toString()
+        /**
+         * Показать текстовый файл мода или чит.
+         *
+         * Возвращало `{"ok":false,"reason":"нет"}` всегда, поэтому любой
+         * .txt чита открывался сообщением «не открылся». Читаем честно,
+         * с потолком по размеру: чит-файл - это килобайты, а вот romfs.bin
+         * рядом может быть на гигабайт, и его нельзя тянуть в WebView.
+         */
+        @JavascriptInterface fun readText(path: String): String = runCatching {
+            val f = File(path)
+            when {
+                !f.isFile -> JSONObject().put("ok", false).put("reason", "файла нет: $path")
+                f.length() > 512 * 1024 ->
+                    JSONObject().put("ok", false)
+                        .put("reason", "слишком большой (${f.length() / 1024} КБ) — это не текст")
+                else -> JSONObject().put("ok", true)
+                    .put("text", f.readText().take(200_000))
+                    .put("bytes", f.length())
+            }.toString()
+        }.getOrElse {
+            JSONObject().put("ok", false).put("reason", it.message ?: "не прочитался").toString()
+        }
+        /**
+         * Забрать сохранение из папки Eden.
+         *
+         * Возвращало `{"ok":true}` ничего не сделав - худший вид
+         * заглушки: панель рапортовала об успехе, сейв не появлялся.
+         *
+         * Честный ответ здесь - отказ с объяснением. Kenji (LibHac)
+         * держит сохранения не папками, как Eden, а в своей базе:
+         * в ядре есть SaveDataIndexer и SaveDataFileSystemService, и
+         * запись на диске адресуется идентификатором из индекса, а не
+         * TitleId в имени папки. Просто скопировать каталог Eden в bis/
+         * нельзя - индекс о нём не узнает.
+         */
+        @JavascriptInterface fun adoptSave(path: String, title: String): String =
+            JSONObject().put("ok", false)
+                .put("message",
+                    "перенос сейвов Eden → Kenji не поддержан: Kenji хранит их через " +
+                    "SaveDataIndexer, а не папкой с TitleId. Копия каталога не подхватится. " +
+                    "Сейвы Kenji: " + File(DataRoot.resolve(), "bis/user/save").absolutePath)
+                .toString()
         @JavascriptInterface fun rescan() { main.post { reload() } }
         @JavascriptInterface fun reloadInterface() { main.post { web.loadUrl("file:///android_asset/kenji.html") } }
         @JavascriptInterface fun openTools() {
@@ -411,6 +525,14 @@ class MainActivity : AppCompatActivity() {
             "try{if(typeof onConverted==='function')onConverted({ok:true,message:'файлы в конвертере'})}catch(e){}",
             null
         )
+    }
+
+    /** Размер по-человечески. */
+    private fun human(n: Long): String = when {
+        n <= 0 -> "0"
+        n < 1024L * 1024 -> "${n / 1024} КБ"
+        n < 1024L * 1024 * 1024 -> "${n / (1024 * 1024)} МБ"
+        else -> "%.1f ГБ".format(n / (1024.0 * 1024 * 1024))
     }
 
     private fun memoryJson(): String {
