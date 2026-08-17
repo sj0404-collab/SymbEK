@@ -211,6 +211,10 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         }
         if (inited) {
             javaReady.set(true)
+            // Ядро поднято - только теперь можно спрашивать у него
+            // метаданные. В лаунчере этого делать нельзя, там оно не
+            // инициализировано и вызов убивает процесс.
+            GameInfoReader.coreIsUp()
             return
         }
         if (javaReady.get()) return

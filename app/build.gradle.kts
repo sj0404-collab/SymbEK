@@ -3,6 +3,20 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+/**
+ * ПОСТОЯННЫЙ КЛЮЧ ПОДПИСИ.
+ *
+ * Раньше release подписывался debug-ключом. У него две беды: он
+ * генерируется на машине сборки, то есть у КАЖДОЙ сборки CI ключ свой,
+ * и Android отказывается ставить обновление поверх APK с другой
+ * подписью - «приложение не установлено». Приходилось сносить и терять
+ * настройки.
+ *
+ * Ключ лежит в секретах репозитория (KEYSTORE_B64), а не в git.
+ * Срок - 30 лет, alias kenji.
+ */
+val keystoreFile: File? = System.getenv("KENJI_KEYSTORE")?.let { file(it) }?.takeIf { it.isFile }
+
 android {
     namespace = "dev.symbiosis.kenji"
     compileSdk = 35
@@ -11,11 +25,24 @@ android {
         applicationId = "dev.symbiosis.kenji"
         minSdk = 29
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.3.2"
+        // Версия. versionCode обязан расти, иначе Android откажется
+        // ставить обновление поверх. В CI подставляется номер сборки,
+        // локально остаётся базовое значение.
+        versionCode = (System.getenv("KENJI_VERSION_CODE") ?: "6").toInt()
+        versionName = System.getenv("KENJI_VERSION_NAME") ?: "0.4.0"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild {
             cmake { arguments += listOf("-DANDROID_STL=c++_static") }
+        }
+    }
+    signingConfigs {
+        create("kenji") {
+            if (keystoreFile != null) {
+                storeFile = keystoreFile
+                storePassword = System.getenv("KENJI_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KENJI_KEY_ALIAS")
+                keyPassword = System.getenv("KENJI_KEY_PASSWORD")
+            }
         }
     }
     buildTypes {
@@ -27,7 +54,13 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debug")
+            // Свой ключ, когда он есть; debug - только для локальной
+            // сборки без секретов, такой APK поверх не встанет.
+            signingConfig = if (keystoreFile != null) {
+                signingConfigs.getByName("kenji")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
         debug { isMinifyEnabled = false }
     }

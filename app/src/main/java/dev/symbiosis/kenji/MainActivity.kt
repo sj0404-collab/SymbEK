@@ -79,7 +79,13 @@ class MainActivity : AppCompatActivity() {
         settings = SettingsStore(this)
         folders = FolderStore(this)
         plugins = PluginStore(this)
-        DataRoot.ensureKenjiLayout(DataRoot.kenjiHome())
+        // Раскладка папок - в фоне, не в главном потоке.
+        //
+        // ensureKenjiLayout() зовёт мост прошивки и мост модов: это
+        // сотни файловых операций (400 NCA - обычное дело). В onCreate
+        // на главном потоке это секунды заморозки, а Android за такое
+        // убивает приложение по ANR ещё до того, как покажется список.
+        Thread({ runCatching { DataRoot.ensureKenjiLayout(DataRoot.kenjiHome()) } }, "kenji-layout").start()
         web = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true

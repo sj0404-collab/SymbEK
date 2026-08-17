@@ -64,16 +64,53 @@ jobs:
           test -f "$DEST/libskiasharp.so"
           test -f "$DEST/libkenjinxjni.so"
           ls -lh "$DEST"
+      - name: Restore the release keystore
+        # Один и тот же ключ на все сборки. Без него каждая подписывалась
+        # свежим debug-ключом, и обновление не вставало поверх: Android
+        # отвергает APK с другой подписью.
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::нет секрета KEYSTORE_B64 — release будет неустановимым поверх"
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/kenji-release.jks"
+          ls -l "$RUNNER_TEMP/kenji-release.jks"
+
       - name: Build
+        env:
+          KENJI_KEYSTORE: ${{ runner.temp }}/kenji-release.jks
+          KENJI_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KENJI_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KENJI_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           TYPE=${{ github.event.inputs.build_type || 'release' }}
           if [ "$TYPE" = debug ]; then TASK=assembleDebug; else TASK=assembleRelease; fi
+
+          # versionCode обязан расти от сборки к сборке, иначе установка
+          # поверх отклоняется как "откат версии".
+          BASE=6
+          export KENJI_VERSION_CODE=$(( BASE + GITHUB_RUN_NUMBER ))
+          export KENJI_VERSION_NAME="0.4.$GITHUB_RUN_NUMBER"
+          echo "версия: $KENJI_VERSION_NAME (code $KENJI_VERSION_CODE)"
+
           gradle --no-daemon $TASK
           APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
           echo "APK=$APK"
           echo "MD5=$(md5sum "$APK" | cut -d' ' -f1)"
           echo "SIZE=$(du -h "$APK" | cut -f1)"
           echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+          echo "KENJI_VERSION_NAME=$KENJI_VERSION_NAME" >> "$GITHUB_ENV"
+          echo "KENJI_VERSION_CODE=$KENJI_VERSION_CODE" >> "$GITHUB_ENV"
+
+      - name: Show the signing fingerprint
+        # Печатается, чтобы было видно: подпись та же, что в прошлый раз.
+        # Если отпечаток изменился - обновление поверх не встанет, и знать
+        # об этом надо здесь, а не на телефоне.
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
+          "$APKSIGNER" verify --print-certs "$APK_PATH" | grep -i "SHA-256\|SHA-1" || true
       - uses: actions/upload-artifact@v4
         with:
           name: Kenji-Space
@@ -88,5 +125,5 @@ jobs:
           SIZE=$(stat -c%s Kenji-Space.apk)
           gh release delete latest --yes || true
           gh release create latest Kenji-Space.apk \
-            --title "Kenji Space" \
-            --notes "Ядро и нативы официального Kenji-NX 2.1.0-pr.2 (libkenjinx + FFmpeg + OpenSSL + SDL2 + Skia + OpenAL + jni). Оболочка — как у Symbiosis. MD5 ${MD5} · ${SIZE} байт"
+            --title "Kenji Space ${KENJI_VERSION_NAME}" \
+            --notes "Версия ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). Подписано постоянным ключом — ставится поверх предыдущей без удаления. Ядро официального Kenji-NX 2.1.0-pr.2. MD5 ${MD5} · ${SIZE} байт"

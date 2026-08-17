@@ -55,6 +55,30 @@ object GameInfoReader {
     private val cache = HashMap<String, Info>()
     private val failed = HashSet<String>()
 
+    /**
+     * ЯДРО ЗДЕСЬ ТРОГАТЬ НЕЛЬЗЯ, ЕСЛИ ОНО НЕ ПОДНЯТО.
+     *
+     * Прошлая правка (названия и обложки из deviceGetGameInfo) сломала
+     * приложение: лаунчер зовёт games()/icon() сразу при показе списка,
+     * а ядро в процессе лаунчера НЕ инициализировано - javaInitialize()
+     * выполняется только в :player, перед запуском игры.
+     *
+     * Вызов C-функции ядра до javaInitialize роняет процесс целиком:
+     * это нативный сбой, а не Java-исключение, и runCatching его не
+     * ловит. Отсюда «подключил папку - вылетело и больше не
+     * запускается»: папка сохранилась, при следующем старте список
+     * читается снова, снова дёргает ядро - и снова падает. Замкнутый
+     * круг, из которого нельзя выйти, не очистив данные.
+     *
+     * Поэтому: в лаунчере метаданные из ядра НЕ читаются. Флаг
+     * выставляет только PlayerActivity, где ядро уже поднято.
+     */
+    @Volatile
+    private var coreReady = false
+
+    /** Зовётся из :player после успешного javaInitialize. */
+    fun coreIsUp() { coreReady = true }
+
     @Synchronized
     fun clear() {
         cache.clear()
@@ -71,6 +95,9 @@ object GameInfoReader {
     fun read(context: Context, path: String): Info? {
         cache[path]?.let { return it }
         if (path in failed) return null
+        // Без поднятого ядра - молча ничего. Имя файла лучше, чем
+        // мёртвое приложение.
+        if (!coreReady) return null
 
         val ext = path.substringAfterLast('.', "").lowercase().substringBefore('?')
         val pfd = openRom(context, path)
