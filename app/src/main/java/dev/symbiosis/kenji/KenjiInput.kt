@@ -1,33 +1,20 @@
 package dev.symbiosis.kenji
 
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import org.kenjinx.android.KenjinxCore
+import kotlin.math.abs
 
 /**
- * Ввод для ядра Kenji.
+ * Android input -> the official Kenji gamepad ABI.
  *
- * ЧЕГО ЗДЕСЬ НЕ БЫЛО
- *   PlayerActivity запускала игру и на этом заканчивалась: ни касаний, ни
- *   кнопок, ни геймпада. Игра шла, но управлять ей было нечем. Это не
- *   «недоделанная мелочь» - без ввода эмулятор бесполезен.
- *
- * ОТКУДА ВЗЯТЫ ЧИСЛА
- *   Не угаданы и не списаны с Ryujinx для ПК. Вынуты из официального
- *   kenji-nx-v2.1.0-pr.2-standard.apk дизассемблером:
- *
- *     GamePadButtonInputId.<clinit>  - порядок значений enum;
- *     GameController.handleEvent     - каким числом зовут стик;
- *     KenjinxNativeJna               - точные сигнатуры.
- *
- *   Ordinal enum'а и есть код кнопки: официальный код передаёт
- *   `GamePadButtonInputId.X.ordinal()` прямо в inputSetButtonPressed.
- *   Перепутать порядок = нажимать не те кнопки, поэтому список ниже
- *   переписан ровно в том порядке, в каком объявлен в их байткоде.
+ * The core keeps a virtual gamepad driver. SetButton/SetStick changes that
+ * driver's state; inputUpdate() (pumped by PlayerActivity) transfers it into
+ * the emulated HID service. Keeping those two responsibilities separate is
+ * required by the original Android port.
  */
 object KenjiInput {
-
-    // Порядок обязателен: это и есть коды, которые уходят в ядро.
     const val NONE = 0
     const val A = 1
     const val B = 2
@@ -46,23 +33,24 @@ object KenjiInput {
     const val MINUS = 15
     const val PLUS = 16
 
-    /** Идентификаторы стиков в inputSetStickAxis. GameController: левый 1, правый 2. */
     const val STICK_LEFT = 1
     const val STICK_RIGHT = 2
 
-    /** Порт, который вернул inputConnectGamepad. -1 = ещё не подключались. */
     @Volatile
     var pad: Int = -1
         private set
 
-    /** Подключить виртуальный геймпад. Официальный код тоже зовёт с 0. */
     fun connect(core: KenjinxCore): Int {
         if (pad >= 0) return pad
-        pad = runCatching { core.inputConnectGamepad(0) }.getOrDefault(-1)
-        return pad
+        val connected = runCatching { core.inputConnectGamepad(0) }.getOrDefault(-1)
+        pad = connected
+        return connected
     }
 
-    fun reset() { pad = -1 }
+    fun reset() {
+        pad = -1
+        held.clear()
+    }
 
     fun press(core: KenjinxCore, button: Int) {
         val id = pad
@@ -76,19 +64,17 @@ object KenjiInput {
         runCatching { core.inputSetButtonReleased(button, id) }
     }
 
-    /**
-     * Ось стика.
-     *
-     * Y инвертируется: в официальном handleEvent перед вызовом стоит
-     * neg-float. На экране Y растёт вниз, в ядре - вверх; без минуса
-     * персонаж идёт в обратную сторону.
-     */
     fun stick(core: KenjinxCore, stick: Int, x: Float, y: Float) {
         val id = pad
         if (id < 0) return
-        val cx = x.coerceIn(-1f, 1f)
-        val cy = y.coerceIn(-1f, 1f)
-        runCatching { core.inputSetStickAxis(stick, cx, -cy, id) }
+        runCatching {
+            core.inputSetStickAxis(
+                stick,
+                x.coerceIn(-1f, 1f),
+                -y.coerceIn(-1f, 1f),
+                id
+            )
+        }
     }
 
     fun touch(core: KenjinxCore, x: Int, y: Int) {
@@ -99,14 +85,10 @@ object KenjiInput {
         runCatching { core.inputReleaseTouchPoint() }
     }
 
-    /**
-     * Физический геймпад: раскладка Android → коды Kenji.
-     *
-     * Возвращает NONE для клавиш, которые нас не касаются, чтобы система
-     * обработала их сама (громкость, «назад» с геймпада и т.п.).
-     */
     fun fromKeyCode(code: Int): Int = when (code) {
-        KeyEvent.KEYCODE_BUTTON_A -> B      // на Switch A/B зеркальны Xbox
+        // Android gamepads use the Xbox physical layout. Kenji expects the
+        // Switch semantic layout, so A/B and X/Y are intentionally crossed.
+        KeyEvent.KEYCODE_BUTTON_A -> B
         KeyEvent.KEYCODE_BUTTON_B -> A
         KeyEvent.KEYCODE_BUTTON_X -> Y
         KeyEvent.KEYCODE_BUTTON_Y -> X
@@ -114,8 +96,10 @@ object KenjiInput {
         KeyEvent.KEYCODE_BUTTON_R1 -> R
         KeyEvent.KEYCODE_BUTTON_L2 -> ZL
         KeyEvent.KEYCODE_BUTTON_R2 -> ZR
-        KeyEvent.KEYCODE_BUTTON_THUMBL -> LEFT_STICK_BUTTON
-        KeyEvent.KEYCODE_BUTTON_THUMBR -> RIGHT_STICK_BUTTON
+        KeyEvent.KEYCODE_BUTTON_THUMBL,
+        KeyEvent.KEYCODE_BUTTON_11 -> LEFT_STICK_BUTTON
+        KeyEvent.KEYCODE_BUTTON_THUMBR,
+        KeyEvent.KEYCODE_BUTTON_12 -> RIGHT_STICK_BUTTON
         KeyEvent.KEYCODE_BUTTON_START -> PLUS
         KeyEvent.KEYCODE_BUTTON_SELECT -> MINUS
         KeyEvent.KEYCODE_DPAD_UP -> DPAD_UP
@@ -125,59 +109,70 @@ object KenjiInput {
         else -> NONE
     }
 
-    /** Мёртвая зона: без неё стик «плывёт» на изношенном геймпаде. */
     private const val DEAD_ZONE = 0.15f
+    private fun dead(value: Float): Float = if (abs(value) < DEAD_ZONE) 0f else value
 
-    private fun dead(v: Float): Float = if (kotlin.math.abs(v) < DEAD_ZONE) 0f else v
-
-    /** Оси физического геймпада. Возвращает true, если событие наше. */
+    /** Physical controller axes, including RX/RY devices used by Xbox pads. */
     fun motion(core: KenjinxCore, event: MotionEvent): Boolean {
-        // Скобки обязательны: в Kotlin `==` связывает сильнее инфиксного
-        // `and`, поэтому без них выражение читается как
-        // `source and (SOURCE_JOYSTICK == 0)` и не компилируется вовсе.
-        if ((event.source and android.view.InputDevice.SOURCE_JOYSTICK) == 0) return false
+        if ((event.source and InputDevice.SOURCE_CLASS_JOYSTICK) == 0) return false
         if (pad < 0) return false
 
-        stick(
-            core, STICK_LEFT,
-            dead(event.getAxisValue(MotionEvent.AXIS_X)),
-            dead(event.getAxisValue(MotionEvent.AXIS_Y))
-        )
-        stick(
-            core, STICK_RIGHT,
-            dead(event.getAxisValue(MotionEvent.AXIS_Z)),
-            dead(event.getAxisValue(MotionEvent.AXIS_RZ))
-        )
+        val device = event.device
+        fun hasAxis(axis: Int): Boolean =
+            device?.getMotionRange(axis, InputDevice.SOURCE_CLASS_JOYSTICK) != null ||
+                device?.getMotionRange(axis, InputDevice.SOURCE_JOYSTICK) != null
 
-        // Крестовина на многих геймпадах приходит осями, а не клавишами.
-        val hx = event.getAxisValue(MotionEvent.AXIS_HAT_X)
-        val hy = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
-        hat(core, DPAD_LEFT, hx < -0.5f)
-        hat(core, DPAD_RIGHT, hx > 0.5f)
-        hat(core, DPAD_UP, hy < -0.5f)
-        hat(core, DPAD_DOWN, hy > 0.5f)
+        fun axis(axis: Int): Float = if (hasAxis(axis)) event.getAxisValue(axis) else 0f
 
-        // Курки как оси: у части геймпадов L2/R2 не дают KEYCODE.
-        hat(core, ZL, event.getAxisValue(MotionEvent.AXIS_LTRIGGER) > 0.5f ||
-            event.getAxisValue(MotionEvent.AXIS_BRAKE) > 0.5f)
-        hat(core, ZR, event.getAxisValue(MotionEvent.AXIS_RTRIGGER) > 0.5f ||
-            event.getAxisValue(MotionEvent.AXIS_GAS) > 0.5f)
+        val rightX = if (hasAxis(MotionEvent.AXIS_RX)) MotionEvent.AXIS_RX else MotionEvent.AXIS_Z
+        val rightY = if (hasAxis(MotionEvent.AXIS_RY)) MotionEvent.AXIS_RY else MotionEvent.AXIS_RZ
+
+        stick(core, STICK_LEFT, dead(axis(MotionEvent.AXIS_X)), dead(axis(MotionEvent.AXIS_Y)))
+        stick(core, STICK_RIGHT, dead(axis(rightX)), dead(axis(rightY)))
+
+        val rightUsesZ = rightX == MotionEvent.AXIS_Z
+        val rightUsesRz = rightY == MotionEvent.AXIS_RZ
+        val leftTrigger = when {
+            hasAxis(MotionEvent.AXIS_LTRIGGER) -> axis(MotionEvent.AXIS_LTRIGGER)
+            hasAxis(MotionEvent.AXIS_BRAKE) -> axis(MotionEvent.AXIS_BRAKE)
+            !rightUsesZ && hasAxis(MotionEvent.AXIS_Z) -> axis(MotionEvent.AXIS_Z)
+            else -> 0f
+        }
+        val rightTrigger = when {
+            hasAxis(MotionEvent.AXIS_RTRIGGER) -> axis(MotionEvent.AXIS_RTRIGGER)
+            hasAxis(MotionEvent.AXIS_GAS) -> axis(MotionEvent.AXIS_GAS)
+            !rightUsesRz && hasAxis(MotionEvent.AXIS_RZ) -> axis(MotionEvent.AXIS_RZ)
+            else -> 0f
+        }
+        hat(core, ZL, leftTrigger > 0.5f)
+        hat(core, ZR, rightTrigger > 0.5f)
+
+        val hatX = axis(MotionEvent.AXIS_HAT_X)
+        val hatY = axis(MotionEvent.AXIS_HAT_Y)
+        hat(core, DPAD_LEFT, hatX < -0.5f)
+        hat(core, DPAD_RIGHT, hatX > 0.5f)
+        hat(core, DPAD_UP, hatY < -0.5f)
+        hat(core, DPAD_DOWN, hatY > 0.5f)
         return true
     }
 
-    /** Состояние удерживается, чтобы не слать press на каждый кадр. */
     private val held = HashSet<Int>()
 
     private fun hat(core: KenjinxCore, button: Int, down: Boolean) {
-        val was = held.contains(button)
-        if (down && !was) {
-            held.add(button)
-            press(core, button)
-        } else if (!down && was) {
-            held.remove(button)
-            release(core, button)
+        val wasDown = held.contains(button)
+        when {
+            down && !wasDown -> {
+                held.add(button)
+                press(core, button)
+            }
+            !down && wasDown -> {
+                held.remove(button)
+                release(core, button)
+            }
         }
     }
 
-    fun clearHeld() = held.clear()
+    fun clearHeld() {
+        held.clear()
+    }
 }

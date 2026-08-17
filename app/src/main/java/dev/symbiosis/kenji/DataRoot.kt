@@ -120,11 +120,14 @@ object DataRoot {
 
     fun firmwarePresent(): Boolean {
         val root = File(resolve())
+        // An empty bis/system directory is not firmware. Count the actual
+        // registered NCA entries, otherwise a failed bridge is displayed as a
+        // green check and the player later dies in javaInitialize().
         if (FirmwareBridge.kenjiReady(root)) return true
-        val kenjiBis = File(root, "bis")
-        if (kenjiBis.isDirectory && (kenjiBis.listFiles()?.isNotEmpty() == true)) return true
         val edenFw = File(root, "nand/system/Contents/registered")
-        return edenFw.isDirectory && (edenFw.listFiles()?.size ?: 0) > 10
+        return edenFw.isDirectory && (edenFw.listFiles()?.count {
+            it.isFile && it.name.endsWith(".nca", true) && it.length() > 1000L
+        } ?: 0) >= 10
     }
 
     fun firmwareNote(): String {
@@ -134,16 +137,19 @@ object DataRoot {
         val src = FirmwareBridge.bestSource()
         if (src != null)
             return "нашёл Eden (${src.label}, ${src.ncas} NCA). Kenji читает bis/{id}.nca/00 — нажмите «Мост Eden» или она подтянется сама."
-        val n = File(root, "nand/system/Contents/registered").listFiles()?.size ?: 0
-        if (n > 10) return "это папка Eden: $n файлов. Мост ещё не разложил их в bis/."
+        val n = File(root, "nand/system/Contents/registered").listFiles()?.count {
+            it.isFile && it.name.endsWith(".nca", true) && it.length() > 1000L
+        } ?: 0
+        if (n > 10) return "это папка Eden: $n NCA. Мост ещё не разложил их в bis/."
         return "прошивки нет"
     }
 
     fun inspect(path: String): JSONObject {
         val dir = File(path)
         val keys = File(dir, "system/prod.keys").isFile || File(dir, "keys/prod.keys").isFile
-        val bis = File(dir, "bis").listFiles()?.isNotEmpty() == true
-        val edenFw = File(dir, "nand/system/Contents/registered").listFiles()?.size ?: 0
+        val bis = FirmwareBridge.kenjiReady(dir)
+        val edenFw = File(dir, "nand/system/Contents/registered").listFiles()
+            ?.count { it.isFile && it.name.endsWith(".nca", true) && it.length() > 1000L } ?: 0
         return JSONObject()
             .put("path", path)
             .put("exists", dir.isDirectory)
@@ -186,7 +192,7 @@ object DataRoot {
         return JSONObject().put("roots", arr).put("current", resolve()).toString()
     }
 
-    fun setPath(path: String): String {
+    fun setPath(path: String, allowCopy: Boolean = false): String {
         val norm = normalise(path)
         val dir = File(norm)
         if (!dir.exists()) dir.mkdirs()
@@ -195,6 +201,13 @@ object DataRoot {
         }
         configured = norm
         ensureKenjiLayout(dir)
+        if (allowCopy) {
+            // This method is called from a worker thread by the picker. Do the
+            // expensive cross-app copy here so the player sees a complete
+            // firmware tree rather than a directory full of empty entries.
+            FirmwareBridge.auto(dir, allowCopy = true)
+            ModBridge.auto(dir, allowCopy = true)
+        }
         val inf = inspect(norm)
         val bits = mutableListOf<String>()
         if (inf.optBoolean("keys")) bits += "ключи есть"

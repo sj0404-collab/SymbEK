@@ -43,6 +43,8 @@
             android:exported="false"
             android:launchMode="singleTask"
             android:process=":player"
+            android:hardwareAccelerated="true"
+            android:resizeableActivity="true"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
     </application>
 </manifest>

@@ -29,7 +29,10 @@ jobs:
           gradle-version: "8.9"
       - name: NDK and CMake
         run: |
-          yes | sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1" || true
+          yes | sdkmanager --install \
+            "platform-tools" "platforms;android-35" \
+            "build-tools;34.0.0" "build-tools;35.0.0" \
+            "ndk;26.1.10909125" "cmake;3.22.1"
       - name: Embed official Kenji-NX 2.1.0-pr.2 natives
         run: |
           # Same .so set as kenji-nx-v2.1.0-pr.2-standard.apk:
@@ -65,9 +68,10 @@ jobs:
           test -f "$DEST/libkenjinxjni.so"
           ls -lh "$DEST"
       - name: Restore the release keystore
-        # Один и тот же ключ на все сборки. Без него каждая подписывалась
-        # свежим debug-ключом, и обновление не вставало поверх: Android
-        # отвергает APK с другой подписью.
+        # Debug builds use the Android debug key. Release builds use one
+        # permanent key, otherwise every GitHub runner creates a different
+        # signature and Android rejects the next update.
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_type != 'debug' }}
         env:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
         run: |
@@ -76,10 +80,13 @@ jobs:
             exit 1
           fi
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/kenji-release.jks"
-          ls -l "$RUNNER_TEMP/kenji-release.jks"
+          test -s "$RUNNER_TEMP/kenji-release.jks"
 
-      - name: Build
+      - name: Build in GitHub Actions
         env:
+          # For debug there is deliberately no keystore file; Gradle falls
+          # back to the Android debug key. For release this path was restored
+          # by the previous step.
           KENJI_KEYSTORE: ${{ runner.temp }}/kenji-release.jks
           KENJI_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KENJI_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
@@ -104,6 +111,14 @@ jobs:
           echo "KENJI_VERSION_NAME=$KENJI_VERSION_NAME" >> "$GITHUB_ENV"
           echo "KENJI_VERSION_CODE=$KENJI_VERSION_CODE" >> "$GITHUB_ENV"
 
+      - name: Verify the actual APK payload
+        run: |
+          set -euo pipefail
+          test -n "${APK_PATH:-}"
+          unzip -l "$APK_PATH" | grep -E 'lib/arm64-v8a/lib(kenjinx|kenjinxjni|symbiosis_kenji)\.so'
+          unzip -l "$APK_PATH" | grep 'assets/kenji.html'
+          test "$(stat -c%s "$APK_PATH")" -gt 40000000
+
       - name: Show the signing fingerprint
         # Печатается, чтобы было видно: подпись та же, что в прошлый раз.
         # Если отпечаток изменился - обновление поверх не встанет, и знать
@@ -116,6 +131,7 @@ jobs:
           name: Kenji-Space
           path: app/build/outputs/apk/**/*.apk
       - name: Release
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_type != 'debug' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

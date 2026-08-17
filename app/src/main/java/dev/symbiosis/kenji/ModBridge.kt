@@ -191,8 +191,17 @@ object ModBridge {
     }
 
     private fun tryCopy(src: File, dest: File): Boolean = try {
-        src.inputStream().use { i -> dest.outputStream().use { o -> i.copyTo(o) } }
-        dest.isFile && dest.length() == src.length()
+        val part = File(dest.parentFile, "${dest.name}.part-${System.nanoTime()}")
+        src.inputStream().use { input -> part.outputStream().use { output -> input.copyTo(output) } }
+        if (!part.isFile || part.length() != src.length()) {
+            part.delete()
+            false
+        } else {
+            if (dest.exists()) dest.delete()
+            val moved = part.renameTo(dest)
+            if (!moved) part.delete()
+            moved && dest.isFile && dest.length() == src.length()
+        }
     } catch (_: Throwable) {
         false
     }

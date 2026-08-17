@@ -33,15 +33,19 @@ object GameInfoReader {
 
     /** Соответствует org.kenjinx.android.viewmodels.GameInfo. Порядок полей важен. */
     class GameInfo : com.sun.jna.Structure() {
+        // The native ABI starts with a double, then five char* pointers.
+        // Keep this order identical to the official GameInfo.java; JNA uses
+        // it as the physical memory layout, not merely as a Kotlin property
+        // order.
+        @JvmField var FileSize: Double = 0.0
         @JvmField var TitleName: String? = null
         @JvmField var TitleId: String? = null
         @JvmField var Developer: String? = null
         @JvmField var Version: String? = null
         @JvmField var Icon: String? = null
-        @JvmField var FileSize: Double = 0.0
 
         override fun getFieldOrder(): List<String> =
-            listOf("TitleName", "TitleId", "Developer", "Version", "Icon", "FileSize")
+            listOf("FileSize", "TitleName", "TitleId", "Developer", "Version", "Icon")
     }
 
     data class Info(

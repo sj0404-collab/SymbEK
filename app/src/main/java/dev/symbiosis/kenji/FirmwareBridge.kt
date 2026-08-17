@@ -234,10 +234,22 @@ object FirmwareBridge {
     }
 
     private fun tryCopy(src: File, dest: File): Boolean = try {
+        // Never expose a partially copied NCA as bis/.../00. The core scans
+        // this tree during javaInitialize, so an interrupted direct copy can
+        // poison the whole filesystem for the process.
+        val part = File(dest.parentFile, "${dest.name}.part-${System.nanoTime()}")
         FileInputStream(src).use { input ->
-            FileOutputStream(dest).use { output -> input.copyTo(output) }
+            FileOutputStream(part).use { output -> input.copyTo(output) }
         }
-        dest.isFile && dest.length() == src.length()
+        if (!part.isFile || part.length() != src.length()) {
+            part.delete()
+            false
+        } else {
+            if (dest.exists()) dest.delete()
+            val moved = part.renameTo(dest)
+            if (!moved) part.delete()
+            moved && dest.isFile && dest.length() == src.length()
+        }
     } catch (_: Throwable) {
         false
     }

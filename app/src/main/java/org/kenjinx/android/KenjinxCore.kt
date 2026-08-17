@@ -6,11 +6,40 @@ import com.sun.jna.Native
 import java.util.Collections
 
 /**
- * Official Kenji C API, same signatures as KenjinxNativeJna.
- * Loaded from the packaged libkenjinx.so.
+ * The public C ABI exported by the official Kenji-NX 2.1.0-pr.2 core.
+ *
+ * This interface deliberately contains the lifecycle, surface and input calls
+ * used by PlayerActivity. Omitting one of these calls does not make it
+ * optional: the core keeps state between games and the Android input driver is
+ * only advanced by inputUpdate().
  */
 interface KenjinxCore : Library {
     fun javaInitialize(appPath: String, env: JNIEnv): Boolean
+
+    fun graphicsInitialize(
+        rescale: Float,
+        maxAnisotropy: Float,
+        fastGpuTime: Boolean,
+        fast2DCopy: Boolean,
+        enableMacroJit: Boolean,
+        enableMacroHLE: Boolean,
+        enableShaderCache: Boolean,
+        enableTextureRecompression: Boolean,
+        backendThreading: Int
+    ): Boolean
+
+    fun graphicsInitializeRenderer(
+        extensions: Array<String>,
+        extensionsLength: Int,
+        driver: Long
+    ): Boolean
+
+    fun graphicsRendererSetSize(width: Int, height: Int)
+    fun graphicsRendererSetVsync(vSyncMode: Int)
+    fun graphicsRendererRunLoop()
+    fun graphicsSetBackendThreading(mode: Int)
+    fun graphicsSetPresentEnabled(enabled: Boolean)
+
     fun deviceInitialize(
         memoryManagerMode: Int,
         useNce: Boolean,
@@ -28,73 +57,52 @@ interface KenjinxCore : Library {
         timeZone: String,
         ignoreMissingServices: Boolean
     ): Boolean
-    fun graphicsInitialize(
-        rescale: Float,
-        maxAnisotropy: Float,
-        fastGpuTime: Boolean,
-        fast2DCopy: Boolean,
-        enableMacroJit: Boolean,
-        enableMacroHLE: Boolean,
-        enableShaderCache: Boolean,
-        enableTextureRecompression: Boolean,
-        backendThreading: Int
-    ): Boolean
-    fun graphicsInitializeRenderer(extensions: Array<String>, extensionsLength: Int, driver: Long): Boolean
-    fun graphicsRendererSetSize(width: Int, height: Int)
-    fun graphicsRendererRunLoop()
-    fun graphicsRendererSetVsync(vsyncMode: Int)
-    fun deviceLoadDescriptor(fileDescriptor: Int, gameType: Int, updateDescriptor: Int): Boolean
-    fun inputInitialize(width: Int, height: Int)
 
-    // --- Ввод -------------------------------------------------------------
-    // Сигнатуры сверены с KenjinxNativeJna из официального 2.1.0-pr.2:
-    //   inputSetButtonPressed (I I)V, inputSetStickAxis (I F F I)V,
-    //   inputSetTouchPoint (I I)V,    inputConnectGamepad (I)I.
-    // Без этих объявлений JNA просто не находила методов, и играть было
-    // нечем: игра запускалась и не реагировала ни на что.
+    fun deviceReinitEmulation()
+    fun deviceReloadFilesystem()
+    fun deviceCloseEmulation()
+    fun deviceSignalEmulationClose()
+    fun deviceWaitForGpuDone(timeoutMs: Int)
+    fun deviceRecreateSwapchain()
+    fun deviceSetWindowHandle(handle: Long)
+    fun deviceSetSurfaceRotation(degrees: Int)
+    fun deviceResize(width: Int, height: Int)
+    fun detachWindow()
+
+    fun deviceLoadDescriptor(fileDescriptor: Int, gameType: Int, updateDescriptor: Int): Boolean
+    fun deviceGetGameInfo(fileDescriptor: Int, extension: String, info: dev.symbiosis.kenji.GameInfoReader.GameInfo)
+    fun deviceGetGameFrameRate(): Double
+    fun deviceGetGameFrameTime(): Double
+    fun deviceGetGameFifo(): Double
+    fun deviceInstallFirmware(fileDescriptor: Int, isXci: Boolean)
+    fun deviceVerifyFirmware(fileDescriptor: Int, isXci: Boolean): String
+    fun deviceGetInstalledFirmwareVersion(): String
+    fun uiHandlerSetup()
+    fun uiHandlerSetResponse(isOkPressed: Boolean, input: String)
+
+    fun inputInitialize(width: Int, height: Int)
+    fun inputSetClientSize(width: Int, height: Int)
+    fun inputSetTouchPoint(x: Int, y: Int)
+    fun inputReleaseTouchPoint()
+    fun inputUpdate()
     fun inputConnectGamepad(index: Int): Int
     fun inputSetButtonPressed(button: Int, controllerId: Int)
     fun inputSetButtonReleased(button: Int, controllerId: Int)
     fun inputSetStickAxis(stick: Int, x: Float, y: Float, controllerId: Int)
-    fun inputSetTouchPoint(x: Int, y: Int)
-    fun inputReleaseTouchPoint()
-    fun inputSetClientSize(width: Int, height: Int)
-    fun inputUpdate()
+    fun inputSetAccelerometerData(x: Float, y: Float, z: Float, controllerId: Int)
+    fun inputSetGyroData(x: Float, y: Float, z: Float, controllerId: Int)
 
-    // Звук: официальная оболочка глушит его на паузе. Без этого игра
-    // продолжает играть музыку, когда её свернули.
     fun audioSetPaused(paused: Boolean)
     fun audioSetMuted(muted: Boolean)
-
-    // Смена размера поверхности при повороте экрана.
-    fun deviceResize(width: Int, height: Int)
-    fun deviceSetSurfaceRotation(rotation: Int)
-    fun deviceRecreateSwapchain()
-    fun deviceSetWindowHandle(handle: Long)
-
-    // Счётчики для наложения FPS.
-    fun deviceGetGameFrameRate(): Double
-    fun deviceGetGameFrameTime(): Double
-    fun deviceGetGameFifo(): Double
-    fun deviceCloseEmulation()
-    fun deviceSignalEmulationClose()
     fun loggingSetEnabled(logLevel: Int, enabled: Boolean)
-    fun deviceInstallFirmware(fileDescriptor: Int, isXci: Boolean)
-    fun deviceVerifyFirmware(fileDescriptor: Int, isXci: Boolean): String
-    fun deviceGetInstalledFirmwareVersion(): String
-    fun deviceReloadFilesystem()
-    fun deviceReinitEmulation()
-
-    // Название, издатель, версия и обложка одним вызовом. Сигнатура
-    // сверена с KenjinxNativeJna: (I Ljava/lang/String; GameInfo)V.
-    fun deviceGetGameInfo(
-        fileDescriptor: Int,
-        extension: String,
-        info: dev.symbiosis.kenji.GameInfoReader.GameInfo
-    )
 }
 
 object Kenji {
+    /**
+     * JNA loads the official libkenjinx.so. The JNI companion library is
+     * loaded first because libkenjinx.so imports its Android callbacks from
+     * libkenjinxjni.so.
+     */
     val core: KenjinxCore by lazy {
         System.loadLibrary("kenjinxjni")
         Native.load(

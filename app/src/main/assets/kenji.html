@@ -898,9 +898,8 @@ function engineActions(it) {
   if (it.usable) {
     btns.push('<button class="go e-run" data-id="' + esc(it.id) + '">Запустить</button>');
   }
-  if (it.state === 'ready') {
-    btns.push('<button class="ghost e-rm" data-id="' + esc(it.id) + '">Удалить</button>');
-  }
+  // Kenji is embedded in this APK, so there is no removable runtime core.
+  // Keep the button absent instead of offering an operation that cannot work.
   return btns.join('');
 }
 

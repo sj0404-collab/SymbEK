@@ -1,19 +1,17 @@
 package org.kenjinx.android
 
 /**
- * Official kenjinxjni exports Java_org_kenjinx_android_MainActivity_initVm.
- * We are not their UI — this class exists so that call can stash the JavaVM
- * before javaInitialize. Without it later KenjinxNative callbacks have no VM.
+ * The official JNI stores the JavaVM and the class lookup context when this
+ * exact callback is invoked. PlayerActivity is not the official UI, but the
+ * native core still needs this bootstrap before javaInitialize().
  */
 class MainActivity {
     external fun initVm()
 
     companion object {
-        fun attachVm() {
-            runCatching {
-                System.loadLibrary("kenjinxjni")
-                MainActivity().initVm()
-            }
-        }
+        fun attachVm(): Boolean = runCatching {
+            System.loadLibrary("kenjinxjni")
+            MainActivity().initVm()
+        }.isSuccess
     }
 }

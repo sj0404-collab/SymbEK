@@ -40,7 +40,7 @@ class FolderStore(private val context: Context) {
                 )
             }
         }
-        return JSONObject().put("games", arr).put("keys", true).toString()
+        return JSONObject().put("games", arr).put("keys", DataRoot.keysPresent()).toString()
     }
 
     fun add(uri: Uri): String {
@@ -80,7 +80,10 @@ class FolderStore(private val context: Context) {
 
     private fun isRom(name: String): Boolean {
         val ext = name.substringAfterLast('.', "").lowercase()
-        return ext in setOf("nsp", "nsz", "xci", "xcz", "nro")
+        // Kenji's loader accepts these three container types directly. NSZ/XCZ
+        // are compressed containers and this project does not silently pretend
+        // to convert them, so they stay in the explicit converter inbox.
+        return ext in setOf("nsp", "xci", "nro")
     }
 
     private fun human(n: Long): String {

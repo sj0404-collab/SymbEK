@@ -42,6 +42,14 @@ object Presets {
                 n++
             }
         }
+        listOf("memoryConfiguration", "memoryManagerMode", "backendThreading", "resolution")
+            .forEach { key ->
+                if (values.has(key)) {
+                    val max = if (key == "resolution") 3 else 2
+                    store.setInt(key, values.optInt(key, 0).coerceIn(0, max))
+                    n++
+                }
+            }
         return JSONObject().put("ok", n > 0).put("applied", n)
             .put("message", "Поставлен «$name» · $n настроек Kenji").toString()
     }

@@ -17,7 +17,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONArray
 import org.json.JSONObject
-import org.yuzu.yuzu_emu.utils.EngineDownloader
 import org.yuzu.yuzu_emu.utils.EngineLoader
 import java.io.File
 
@@ -45,11 +44,31 @@ class MainActivity : AppCompatActivity() {
             )
         }
         val path = treePath(uri)
-        val r = if (path != null) DataRoot.setPath(path)
-        else JSONObject().put("ok", false).put("message", "не удалось прочитать путь к папке").toString()
-        web.evaluateJavascript("try{if(typeof onSavesPicked==='function')onSavesPicked($r)}catch(e){}", null)
-        reload()
-        Toast.makeText(this, JSONObject(r).optString("message"), Toast.LENGTH_LONG).show()
+        if (path == null) {
+            val error = JSONObject().put("ok", false)
+                .put("message", "не удалось получить настоящий путь к папке")
+                .toString()
+            web.evaluateJavascript("try{if(typeof onSavesPicked==='function')onSavesPicked($error)}catch(e){}", null)
+            Toast.makeText(this, JSONObject(error).optString("message"), Toast.LENGTH_LONG).show()
+            return@registerForActivityResult
+        }
+
+        // DataRoot.setPath may bridge hundreds of NCA files. Activity Result
+        // callbacks run on the main thread, so do the real filesystem work
+        // off the UI and publish one truthful result when it is complete.
+        Thread({
+            val result = runCatching { DataRoot.setPath(path, allowCopy = true) }
+                .getOrElse {
+                    JSONObject().put("ok", false)
+                        .put("message", it.message ?: "корень данных не подключился")
+                        .toString()
+                }
+            main.post {
+                web.evaluateJavascript("try{if(typeof onSavesPicked==='function')onSavesPicked($result)}catch(e){}", null)
+                reload()
+                Toast.makeText(this, JSONObject(result).optString("message"), Toast.LENGTH_LONG).show()
+            }
+        }, "kenji-data-root").start()
     }
 
     private val pickPlugin = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -85,7 +104,20 @@ class MainActivity : AppCompatActivity() {
         // сотни файловых операций (400 NCA - обычное дело). В onCreate
         // на главном потоке это секунды заморозки, а Android за такое
         // убивает приложение по ANR ещё до того, как покажется список.
-        Thread({ runCatching { DataRoot.ensureKenjiLayout(DataRoot.kenjiHome()) } }, "kenji-layout").start()
+        Thread({
+            runCatching {
+                val home = DataRoot.kenjiHome()
+                // On a separate app-owned Eden tree hardlinks are normally
+                // rejected by Android. The background launch path is the one
+                // place where a real copy is allowed, so the player can start
+                // without a misleading "firmware ready" placeholder.
+                FirmwareBridge.auto(home, allowCopy = true)
+                ModBridge.auto(home, allowCopy = true)
+            }
+            main.post {
+                if (::web.isInitialized) reload()
+            }
+        }, "kenji-layout").start()
         web = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
@@ -108,6 +140,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleView(intent: Intent?) {
         val uri = intent?.data ?: return
+        val state = EngineLoader.state(this, EngineLoader.Engine.KENJI)
+        if (state !is EngineLoader.State.Ready) {
+            Toast.makeText(
+                this,
+                "официальное ядро не найдено в APK: ${if (state is EngineLoader.State.Broken) state.reason else "пересоберите release"}",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
         startActivity(PlayerActivity.intent(this, uri.toString(), uri.lastPathSegment ?: "игра"))
     }
 
@@ -494,7 +535,11 @@ class MainActivity : AppCompatActivity() {
                         .put("usable", ready)
                         .put("selected", true)
                         .put("launches", ready)
-                        .put("note", if (ready) "вшито в APK · ${st.let { if (it is EngineLoader.State.Ready) it.bytes / 1048576 else 54 }} МБ" else "ядра нет в APK")
+                        .put("note", if (ready) {
+                            "вшито в APK · ${(st as EngineLoader.State.Ready).bytes / 1048576} МБ"
+                        } else {
+                            "ядра нет в APK · ожидается официальный libkenjinx.so"
+                        })
                 ))
                 .toString()
         }
@@ -506,14 +551,32 @@ class MainActivity : AppCompatActivity() {
         }
         @JavascriptInterface fun downloadEngine(id: String) { downloadCore() }
         @JavascriptInterface fun probeEngine(id: String) {
-            val payload = JSONObject().put("ok", DataRoot.keysPresent())
-                .put("message", if (DataRoot.keysPresent()) "ключи на месте, ядро можно запускать" else "нет ключей — положите prod.keys")
-                .toString()
+            val state = EngineLoader.state(this@MainActivity, EngineLoader.Engine.KENJI)
+            val root = DataRoot.resolve()
+            val keys = DataRoot.kenjiKeysReady(File(root))
+            val firmware = FirmwareBridge.kenjiReady(File(root))
+            val ok = state is EngineLoader.State.Ready && keys && firmware
+            val message = when {
+                state !is EngineLoader.State.Ready -> "ядро не найдено в APK"
+                !keys -> "нет system/prod.keys"
+                !firmware -> "прошивка не разложена в bis/"
+                else -> "APK, ключи и ${FirmwareBridge.kenjiNcaCount(File(root))} NCA готовы; Vulkan проверится при создании renderer"
+            }
+            val payload = JSONObject().put("ok", ok).put("message", message).toString()
             main.post { web.evaluateJavascript("try{if(typeof onEngineProbe==='function')onEngineProbe($payload)}catch(e){}", null) }
         }
         @JavascriptInterface fun removeEngine(id: String): String {
-            EngineLoader.remove(this@MainActivity, EngineLoader.Engine.KENJI)
-            return JSONObject().put("ok", true).put("message", "ядро удалено").toString()
+            val packaged = EngineLoader.packagedCore(this@MainActivity, EngineLoader.Engine.KENJI)
+            return if (packaged != null) {
+                JSONObject().put("ok", false)
+                    .put("message", "ядро встроено в APK и не удаляется отдельно")
+                    .toString()
+            } else {
+                val removed = EngineLoader.remove(this@MainActivity, EngineLoader.Engine.KENJI)
+                JSONObject().put("ok", removed)
+                    .put("message", if (removed) "ядро удалено" else "не удалось удалить файл ядра")
+                    .toString()
+            }
         }
 
         /**

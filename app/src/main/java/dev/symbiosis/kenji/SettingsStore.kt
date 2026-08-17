@@ -46,13 +46,13 @@ class SettingsStore(context: Context) {
                     .put("on", p.getBoolean(t.key, t.default))
             )
         }
-        val res = p.getInt("resolution", 2).coerceIn(0, 3)
+        val res = int("resolution", 2).coerceIn(0, 3)
         val resLabel = listOf("0.5x", "0.75x", "1x", "2x")[res]
-        val dram = p.getInt("memoryConfiguration", 0).coerceIn(0, 2)
+        val dram = int("memoryConfiguration", 0).coerceIn(0, 2)
         val dramLabel = listOf("4 GiB", "6 GiB", "8 GiB")[dram]
-        val mem = p.getInt("memoryManagerMode", 2).coerceIn(0, 2)
+        val mem = int("memoryManagerMode", 2).coerceIn(0, 2)
         val memLabel = listOf("Software", "Host", "Host Unchecked")[mem]
-        val nce = p.getBoolean("useNce", false)
+        val nce = bool("useNce", false)
         return JSONObject()
             .put("ok", true)
             .put("toggles", arr)
@@ -65,7 +65,7 @@ class SettingsStore(context: Context) {
             .put("cpuLabel", if (nce) "NCE" else "Dynarmic")
             .put("dramLabel", dramLabel)
             .put("memLabel", memLabel)
-            .put("gameFolder", p.getString("gameFolder", "") ?: "")
+            .put("gameFolder", string("gameFolder"))
             .put("note", "пишется сразу на диск (commit), не в очередь apply()")
             .toString()
     }
@@ -81,14 +81,14 @@ class SettingsStore(context: Context) {
     }
 
     fun cycleDram(): String {
-        val next = (p.getInt("memoryConfiguration", 0) + 1) % 3
+        val next = (int("memoryConfiguration", 0) + 1) % 3
         setInt("memoryConfiguration", next)
         val label = listOf("4 GiB", "6 GiB", "8 GiB")[next]
         return JSONObject().put("ok", true).put("message", "DRAM $label").toString()
     }
 
     fun cycleMemMode(): String {
-        val next = (p.getInt("memoryManagerMode", 2) + 1) % 3
+        val next = (int("memoryManagerMode", 2) + 1) % 3
         setInt("memoryManagerMode", next)
         val label = listOf("Software", "Host", "Host Unchecked")[next]
         return JSONObject().put("ok", true).put("message", "память $label").toString()
@@ -104,16 +104,19 @@ class SettingsStore(context: Context) {
             .toString()
     }
 
-    fun bool(key: String, default: Boolean): Boolean = p.getBoolean(key, default)
+    fun bool(key: String, default: Boolean): Boolean =
+        runCatching { p.getBoolean(key, default) }.getOrDefault(default)
 
-    fun int(key: String, default: Int): Int = p.getInt(key, default)
+    fun int(key: String, default: Int): Int =
+        runCatching { p.getInt(key, default) }.getOrDefault(default)
 
-    fun string(key: String, default: String = ""): String = p.getString(key, default) ?: default
+    fun string(key: String, default: String = ""): String =
+        runCatching { p.getString(key, default) ?: default }.getOrDefault(default)
 
     fun setString(key: String, value: String): Boolean = p.edit().putString(key, value).commit()
 
     fun <E : Enum<E>> enum(key: String, values: Array<E>, default: E): E {
-        val i = p.getInt(key, default.ordinal)
+        val i = int(key, default.ordinal)
         return values.getOrElse(i) { default }
     }
 

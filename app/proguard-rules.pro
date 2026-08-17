@@ -1,4 +1,3 @@
--keep class org.yuzu.yuzu_emu.utils.KenjiBridge { *; }
 -keep class org.kenjinx.android.KenjinxNative { *; }
 -keep class org.kenjinx.android.KenjinxCore { *; }
 -keep class org.kenjinx.android.Kenji { *; }

@@ -8,72 +8,29 @@ import android.os.Build
 import java.io.File
 import java.security.MessageDigest
 
-/**
- * Fetches and loads the second emulator core at runtime.
- *
- * WHY THE CORE IS NOT IN THE APK
- *   Measured, not guessed. Built in our own CI (kenji-probe.yml) with
- *   `dotnet publish -r linux-bionic-arm64` and weighed:
- *
- *     LibKenjinx.so      54.7 MB raw -> 19.6 MB compressed in an APK
- *     libyuzu-android.so 34.4 MB raw -> 12.3 MB compressed
- *
- *   Both engines in one APK come to about 47 MB. The ceiling is 25 MB, which
- *   fits exactly one engine. So Eden ships inside the APK and Kenji is
- *   downloaded once, on demand, into the app's own data directory.
- *
- * THE PART THAT ALMOST BROKE THIS
- *   Since Android 14 a shared object may only be dlopen()ed if the file is
- *   READ-ONLY. A downloaded .so left writable throws
- *
- *     UnsatisfiedLinkError: Attempt to load writable file
- *
- *   and on targetSdk 37 that is a hard error, not a warning. Eden targets 36
- *   today, so this would currently pass with a logged warning and then break
- *   the day the target is raised. The file is therefore marked read-only
- *   before it is ever loaded - see [markReadOnly].
- *
- *   W^X (Android 10) forbids *exec()* on files in the data directory, not
- *   dlopen() of a library. Loading a downloaded .so is still allowed; running
- *   a downloaded binary is not. This code only ever loads.
- */
+/** Describes the official Kenji core embedded by the GitHub Actions build. */
 object EngineLoader {
-
-    /** Engines this build knows about. Eden is always present. */
     enum class Engine(val id: String, val label: String) {
         EDEN("eden", "Symbiosis"),
-        KENJI("kenji", "Второе ядро"),
+        KENJI("kenji", "Kenji-NX")
     }
 
-    /** What has to be true before an engine can be selected. */
     sealed class State {
-        /** Compiled into the APK; nothing to do. */
         object Builtin : State()
-
-        /** Downloaded, verified and ready. */
         data class Ready(val path: String, val bytes: Long) : State()
-
-        /** Not here yet. [bytes] is the download size, for an honest prompt. */
         data class Missing(val bytes: Long) : State()
-
-        /** Present but unusable, with the reason spelled out. */
         data class Broken(val reason: String) : State()
     }
 
-    // Where a downloaded core lives. getFilesDir(), not the cache directory:
-    // the cache can be cleared by the system at any moment, and a core that
-    // vanishes mid-session looks like a crash.
-    private fun coreDir(context: Context) =
-        File(context.filesDir, "engines").apply { mkdirs() }
+    /** Exact arm64 size of official libkenjinx.so 2.1.0-pr.2. */
+    val KNOWN_SIZE = mapOf(Engine.KENJI to 48_034_968L)
 
-    fun coreFile(context: Context, engine: Engine) =
-        packagedCore(context, engine) ?: File(coreDir(context), "lib${engine.id}.so")
+    /** SHA of the official core pinned by .github/workflows/build.yml. */
+    private val EXPECTED_SHA = mapOf(
+        Engine.KENJI to "d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590"
+    )
 
-    /**
-     * Core shipped inside the APK (jniLibs). Official Kenji names it
-     * libkenjinx.so; we also accept libkenji.so. Packaged libs are
-     * already read-only — Android 14 will load them.
-     */
+    /** Android extracts this read-only library from the APK. */
     fun packagedCore(context: Context, engine: Engine): File? {
         if (engine != Engine.KENJI) return null
         val dir = context.applicationInfo.nativeLibraryDir ?: return null
@@ -82,20 +39,11 @@ object EngineLoader {
             .firstOrNull { it.isFile && it.length() > 1_000_000L }
     }
 
-    /**
-     * The core's SHA-256, pinned at build time.
-     *
-     * Not decoration. The core is fetched over the network into a directory
-     * this app can write to, so "the file exists" is not the same as "the file
-     * is the one we built". A truncated download produces a library that
-     * dlopen() will happily map and then crash inside.
-     */
-    private val EXPECTED_SHA = mapOf(
-        // Of the exact file published as the engine-kenji release asset,
-        // verified by downloading it back over the public URL rather than
-        // trusting the copy that was uploaded.
-        Engine.KENJI to "d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590",
-    )
+    fun coreFile(context: Context, engine: Engine): File =
+        packagedCore(context, engine) ?: File(
+            File(context.filesDir, "engines").apply { mkdirs() },
+            "lib${engine.id}.so"
+        )
 
     fun state(context: Context, engine: Engine): State {
         if (engine == Engine.EDEN) return State.Builtin
@@ -106,81 +54,21 @@ object EngineLoader {
         if (file.length() < 1_000_000L) {
             return State.Broken("файл ядра обрезан (${file.length()} Б)")
         }
-
-        val want = EXPECTED_SHA[engine].orEmpty()
-        if (want.isNotEmpty()) {
-            val got = sha256(file)
-            if (!got.equals(want, ignoreCase = true)) {
-                return State.Broken("контрольная сумма не совпала")
+        val expected = EXPECTED_SHA[engine]
+        if (!expected.isNullOrBlank()) {
+            val actual = runCatching { sha256(file) }.getOrElse {
+                return State.Broken("не удалось прочитать контрольную сумму: ${it.message}")
+            }
+            if (!actual.equals(expected, ignoreCase = true)) {
+                return State.Broken("контрольная сумма ядра не совпала")
             }
         }
         return State.Ready(file.absolutePath, file.length())
     }
 
-    /** Download sizes, so the prompt can say what it will cost before asking. */
-    val KNOWN_SIZE = mapOf(
-        Engine.KENJI to 57_321_040L,
-    )
-
-    /**
-     * Load a downloaded core.
-     *
-     * Returns null on success, or a message fit to show a person - never a
-     * stack trace, and never a silent false.
-     */
-    fun load(context: Context, engine: Engine): String? {
-        if (engine == Engine.EDEN) return null   // already in the APK
-
-        when (val s = state(context, engine)) {
-            is State.Missing -> return "ядро ${engine.label} не скачано"
-            is State.Broken  -> return "ядро ${engine.label}: ${s.reason}"
-            else -> Unit
-        }
-
-        val file = coreFile(context, engine)
-
-        // Read-only BEFORE the load, or Android 14+ refuses it outright.
-        val ro = markReadOnly(file)
-        if (!ro) {
-            return "не удалось сделать файл ядра доступным только для чтения; " +
-                "Android откажется его загрузить"
-        }
-
-        return try {
-            System.load(file.absolutePath)
-            null
-        } catch (e: UnsatisfiedLinkError) {
-            // The two failures worth telling apart, because the fix differs.
-            val msg = e.message.orEmpty()
-            when {
-                msg.contains("writable", ignoreCase = true) ->
-                    "Android отклонил ядро: файл доступен для записи. " +
-                        "Удалите и скачайте заново."
-                msg.contains("is 32-bit") || msg.contains("64-bit") ->
-                    "ядро собрано под другую архитектуру процессора"
-                else -> "ядро не загрузилось: $msg"
-            }
-        } catch (e: Throwable) {
-            "ядро не загрузилось: ${e.message ?: e.javaClass.simpleName}"
-        }
-    }
-
-    /**
-     * Clear every write bit, and confirm.
-     *
-     * setReadOnly() returns false on some filesystems without changing
-     * anything, so the result is checked with canWrite() rather than trusted -
-     * a library that is still writable fails at load time with a message that
-     * points nowhere near the cause.
-     */
-    fun markReadOnly(file: File): Boolean {
-        file.setWritable(false, false)
-        file.setReadOnly()
-        return !file.canWrite()
-    }
-
-    /** Delete a downloaded core. Must undo read-only first, or delete fails. */
+    /** The embedded core cannot be removed; only a future downloaded file could be. */
     fun remove(context: Context, engine: Engine): Boolean {
+        if (packagedCore(context, engine) != null) return false
         val file = coreFile(context, engine)
         if (!file.exists()) return true
         file.setWritable(true, true)
@@ -188,24 +76,18 @@ object EngineLoader {
     }
 
     fun sha256(file: File): String {
-        val md = MessageDigest.getInstance("SHA-256")
+        val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->
-            val buf = ByteArray(1 shl 16)
+            val buffer = ByteArray(1 shl 16)
             while (true) {
-                val n = input.read(buf)
-                if (n <= 0) break
-                md.update(buf, 0, n)
+                val count = input.read(buffer)
+                if (count <= 0) break
+                digest.update(buffer, 0, count)
             }
         }
-        return md.digest().joinToString("") { "%02x".format(it) }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    /**
-     * Whether this device can run the downloaded core at all.
-     *
-     * The core is built for arm64 only - a 32-bit device would download 55 MB
-     * and then fail to load it, which is worth saying up front.
-     */
     fun deviceSupported(): Boolean =
         Build.SUPPORTED_64_BIT_ABIS.any { it == "arm64-v8a" }
 }
