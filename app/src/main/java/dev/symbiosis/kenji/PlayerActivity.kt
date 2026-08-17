@@ -10,9 +10,9 @@ import android.os.ParcelFileDescriptor
 import android.text.InputType
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.graphics.SurfaceTexture
 import android.view.Surface
-import android.view.SurfaceHolder
-import android.view.SurfaceView
+import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -39,7 +39,7 @@ import org.kenjinx.android.NativeHelpers
  * process owns the complete core lifecycle and can therefore be restarted
  * independently if a native game crash occurs.
  */
-class PlayerActivity : Activity(), SurfaceHolder.Callback {
+class PlayerActivity : Activity() {
     companion object {
         private val javaReady = AtomicBoolean(false)
 
@@ -59,10 +59,12 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
     @Volatile private var playing = false
     @Volatile private var rendererReady = false
     @Volatile private var surfaceReady = false
-    private var currentHolder: SurfaceHolder? = null
     private val shuttingDown = AtomicBoolean(false)
     private var nativeWindowHandle = -1L
     private var pendingNativeWindow = -1L
+    private var textureSurface: Surface? = null
+    private var textureWidth = 0
+    private var textureHeight = 0
     private lateinit var status: TextView
     private var touchPad: TouchPad? = null
     private var keyboardDialog: android.app.AlertDialog? = null
@@ -85,7 +87,25 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         val path = intent.getStringExtra("path").orEmpty()
 
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        val surface = SurfaceView(this)
+        val surface = TextureView(this).apply {
+            isOpaque = true
+            surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+                    onTextureAvailable(texture, width, height)
+                }
+
+                override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {
+                    onTextureSizeChanged(width, height)
+                }
+
+                override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                    onTextureDestroyed()
+                    return true
+                }
+
+                override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+            }
+        }
         root.addView(
             surface,
             FrameLayout.LayoutParams(
@@ -133,44 +153,55 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
             fail("не открылся файл игры")
             return
         }
-        surface.holder.addCallback(this)
         updateHud()
+        textureSurface?.let { surface ->
+            if (!started && surfaceReady) startBoot(surface, textureWidth, textureHeight)
+        }
     }
 
-    override fun surfaceCreated(holder: SurfaceHolder) {
-        currentHolder = holder
+    private fun onTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+        releaseTextureSurface()
+        textureSurface = Surface(texture)
+        textureWidth = width
+        textureHeight = height
         surfaceReady = true
-        // Query once on the Surface callback's UI thread as well. Some
-        // Android vendors expose a valid ANativeWindow only after the first
-        // callback returns to the UI looper.
         releasePendingNativeWindow()
-        pendingNativeWindow = runCatching {
-            if (holder.surface.isValid) nativeWindowFromSurface(holder.surface) else -1L
-        }.getOrDefault(-1L)
+        pendingNativeWindow = nativeWindowFromSurface(textureSurface!!)
         if (started && rendererReady) {
-            rebindSurface(holder, holder.surfaceFrame.width(), holder.surfaceFrame.height())
+            rebindSurface(textureSurface!!, width, height)
+        } else if (!started && !shuttingDown.get() && pfd != null) {
+            startBoot(textureSurface!!, width, height)
         }
-        // Do not start the emulator immediately from surfaceCreated. On
-        // several Android implementations the Surface isValid there but has
-        // no native window until the first surfaceChanged callback supplies
-        // final dimensions. The delayed fallback handles devices which do not
-        // emit a separate size callback.
-        status.postDelayed({
-            if (!started && surfaceReady && !shuttingDown.get()) {
-                startBoot(holder, holder.surfaceFrame.width(), holder.surfaceFrame.height())
-            }
-        }, 150L)
     }
 
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+    private fun onTextureSizeChanged(width: Int, height: Int) {
+        textureWidth = width
+        textureHeight = height
+        textureSurface?.let { surface ->
+            if (rendererReady && !shuttingDown.get()) rebindSurface(surface, width, height)
+        }
+    }
+
+    private fun onTextureDestroyed() {
+        surfaceReady = false
+        releasePendingNativeWindow()
         if (rendererReady && !shuttingDown.get()) {
-            rebindSurface(holder, width, height)
-        } else if (!started && !shuttingDown.get()) {
-            startBoot(holder, width, height)
+            runCatching { Kenji.core.graphicsSetPresentEnabled(false) }
+            runCatching { Kenji.core.deviceWaitForGpuDone(100) }
+            runCatching { Kenji.core.detachWindow() }
+            releaseNativeWindow()
         }
+        releaseTextureSurface()
     }
 
-    private fun startBoot(holder: SurfaceHolder, width: Int, height: Int) {
+    private fun releaseTextureSurface() {
+        textureSurface?.let { runCatching { it.release() } }
+        textureSurface = null
+        textureWidth = 0
+        textureHeight = 0
+    }
+
+    private fun startBoot(surface: Surface, width: Int, height: Int) {
         val fd = pfd?.fd
         if (fd == null || fd < 0) {
             fail("нет дескриптора игры")
@@ -180,7 +211,7 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         started = true
         loop = Thread({
             try {
-                boot(holder, fd, path, width.coerceAtLeast(128), height.coerceAtLeast(128))
+                boot(surface, fd, path, width.coerceAtLeast(128), height.coerceAtLeast(128))
                 if (!shuttingDown.get() && !playing) {
                     runOnUiThread { fail("эмуляция остановилась до первого кадра") }
                 }
@@ -193,22 +224,7 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         }, "kenji-render-loop").also { it.start() }
     }
 
-    override fun surfaceDestroyed(holder: SurfaceHolder) {
-        if (currentHolder === holder) currentHolder = null
-        surfaceReady = false
-        releasePendingNativeWindow()
-        if (shuttingDown.get() || !rendererReady) return
-
-        // A Surface can disappear during rotation or backgrounding while the
-        // emulation process is still alive. Detach the old native window but
-        // keep the core and input loop; surfaceCreated will rebind it.
-        runCatching { Kenji.core.graphicsSetPresentEnabled(false) }
-        runCatching { Kenji.core.deviceWaitForGpuDone(100) }
-        runCatching { Kenji.core.detachWindow() }
-        releaseNativeWindow()
-    }
-
-    private fun boot(holder: SurfaceHolder, fd: Int, path: String, width: Int, height: Int) {
+    private fun boot(surface: Surface, fd: Int, path: String, width: Int, height: Int) {
         val home = DataRoot.kenjiHome()
         // Show the real paths/counts before validation too, so a missing key
         // or firmware never looks like an unexplained black screen.
@@ -260,11 +276,11 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         val window = if (pendingNativeWindow > 0L) {
             pendingNativeWindow.also { pendingNativeWindow = -1L }
         } else {
-            obtainNativeWindow(holder, 3_000L)
+            obtainNativeWindow(surface, 3_000L)
         }
         if (window <= 0L) {
             throw IllegalStateException(
-                "Android Surface не создал ANativeWindow: surfaceValid=${holder.surface.isValid}"
+                "Android Surface не создал ANativeWindow: surfaceValid=${surface.isValid}"
             )
         }
         nativeWindowHandle = window
@@ -547,14 +563,12 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
             .getOrDefault(-1L)
     }
 
-    private fun obtainNativeWindow(holder: SurfaceHolder, timeoutMs: Long): Long {
+    private fun obtainNativeWindow(surface: Surface, timeoutMs: Long): Long {
         val attempts = (timeoutMs / 50L).toInt().coerceAtLeast(1)
         var last = -1L
         repeat(attempts) {
-            if (holder.surface.isValid) {
-                last = runCatching {
-                    nativeWindowFromSurface(holder.surface)
-                }.getOrDefault(-1L)
+            if (surface.isValid) {
+                last = nativeWindowFromSurface(surface)
                 if (last > 0L) return last
             }
             try {
@@ -566,12 +580,12 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
         return last
     }
 
-    private fun rebindSurface(holder: SurfaceHolder, width: Int, height: Int) {
+    private fun rebindSurface(surface: Surface, width: Int, height: Int) {
         if (!rendererReady || shuttingDown.get()) return
         val newWindow = if (pendingNativeWindow > 0L) {
             pendingNativeWindow.also { pendingNativeWindow = -1L }
         } else {
-            obtainNativeWindow(holder, 300L)
+            obtainNativeWindow(surface, 300L)
         }
         if (newWindow <= 0L) {
             progressText = "Android Surface ещё не готов"
@@ -752,8 +766,8 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
             motion?.register()
             runCatching { Kenji.core.audioSetPaused(false) }
             if (surfaceReady) {
-                currentHolder?.let { holder ->
-                    rebindSurface(holder, holder.surfaceFrame.width(), holder.surfaceFrame.height())
+                textureSurface?.let { surface ->
+                    rebindSurface(surface, textureWidth, textureHeight)
                 }
             }
         }
@@ -766,6 +780,7 @@ class PlayerActivity : Activity(), SurfaceHolder.Callback {
 
     override fun onDestroy() {
         shutdownCore()
+        releaseTextureSurface()
         runCatching { pfd?.close() }
         super.onDestroy()
     }
