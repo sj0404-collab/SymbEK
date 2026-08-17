@@ -256,77 +256,27 @@ class PlayerActivity : Activity() {
         updateHud()
 
         val settings = SettingsStore(this)
-        val scale = when (settings.int("resolution", 2).coerceIn(0, 3)) {
-            0 -> 0.5f
-            1 -> 0.75f
-            3 -> 2f
-            else -> 1f
+        // Official MainViewModel.loadGame: graphics → renderer →
+        // deviceInitialize, all on the Android main thread. 1.0.16 hopped
+        // only deviceInitialize to UI (deadlock). 1.0.17 ran it on this
+        // worker and the native core SIGSEGV'd immediately — the comment
+        // in official code is literal: emulation context is main-thread
+        // only. Do the whole block on UI; load + render loop stay here.
+        val uiError = AtomicReference<String?>(null)
+        val uiDone = CountDownLatch(1)
+        runOnUiThread {
+            try {
+                prepareGraphicsAndDevice(core, settings, surface, width, height, home)
+            } catch (t: Throwable) {
+                uiError.set(t.message ?: t.javaClass.simpleName)
+            } finally {
+                uiDone.countDown()
+            }
         }
-        val backend = settings.int("backendThreading", 1).coerceIn(0, 2)
-        if (!core.graphicsInitialize(
-                scale,
-                0f,
-                true,
-                true,
-                false,
-                settings.bool("enableMacroHLE", true),
-                settings.bool("enableShaderCache", true),
-                settings.bool("enableTextureRecompression", false),
-                backend
-            )
-        ) {
-            throw IllegalStateException("graphicsInitialize отказал")
+        if (!uiDone.await(120, TimeUnit.SECONDS)) {
+            throw IllegalStateException("graphics/deviceInitialize на UI не вернулись за 120с")
         }
-
-        progressText = "ожидание Android Surface"
-        updateHud()
-        val window = if (NativePtr.isSet(pendingNativeWindow)) {
-            pendingNativeWindow.also { pendingNativeWindow = NativePtr.NONE }
-        } else {
-            obtainNativeWindow(surface, 3_000L)
-        }
-        if (!NativePtr.isSet(window)) {
-            throw IllegalStateException(
-                "Android Surface не создал ANativeWindow: surfaceValid=${surface.isValid}, " +
-                    "fromSurface=${NativePtr.hex(lastSurfaceWindow)}"
-            )
-        }
-        nativeWindowHandle = window
-        KenjinxNative.nativeSurface = window
-        KenjinxNative.nativeWindow = window
-        core.deviceSetWindowHandle(window)
-        core.deviceSetSurfaceRotation(rotationDegrees())
-
-        val extensions = arrayOf("VK_KHR_surface", "VK_KHR_android_surface")
-        progressText = "создание Vulkan renderer"
-        updateHud()
-        if (!core.graphicsInitializeRenderer(extensions, extensions.size, 0L)) {
-            throw IllegalStateException("graphicsInitializeRenderer отказал")
-        }
-        rendererReady = true
-        core.graphicsRendererSetSize(width, height)
-
-        // Same thread as graphicsInitializeRenderer. Official loadGame does
-        // graphics → renderer → deviceInitialize on one thread. Splitting
-        // the last call onto the UI thread deadlocked this Mali phone:
-        // HUD froze on «инициализация устройства».
-        core.uiHandlerSetup()
-        installCallbacks()
-        progressText = "инициализация устройства"
-        updateHud()
-        val deviceWatch = startNamedWatch("инициализация устройства")
-        val deviceOk = try {
-            initializeDevice(core, settings)
-        } finally {
-            deviceWatch.set(false)
-        }
-        if (!deviceOk) {
-            throw IllegalStateException(
-                "deviceInitialize отказал: ${deviceInitError.ifBlank { "нет контекста эмуляции" }}"
-            )
-        }
-        firmwareInfo = firmwareVersion(core, home)
-        updateHud()
+        uiError.get()?.let { throw IllegalStateException(it) }
 
         val type = romType(path)
         progressText = "загрузка игры…"
@@ -514,6 +464,110 @@ class PlayerActivity : Activity() {
         }
     }
 
+    /** Official loadGame body. Must run on the Android main thread. */
+    private fun prepareGraphicsAndDevice(
+        core: KenjinxCore,
+        settings: SettingsStore,
+        surface: Surface,
+        width: Int,
+        height: Int,
+        home: File
+    ) {
+        val scale = when (settings.int("resolution", 2).coerceIn(0, 3)) {
+            0 -> 0.5f
+            1 -> 0.75f
+            3 -> 2f
+            else -> 1f
+        }
+        val backend = settings.int("backendThreading", 1).coerceIn(0, 2)
+        progressText = "инициализация Vulkan"
+        paintHud()
+        if (!core.graphicsInitialize(
+                scale,
+                0f,
+                true,
+                true,
+                false,
+                settings.bool("enableMacroHLE", true),
+                settings.bool("enableShaderCache", true),
+                settings.bool("enableTextureRecompression", false),
+                backend
+            )
+        ) {
+            throw IllegalStateException("graphicsInitialize отказал")
+        }
+
+        progressText = "ожидание Android Surface"
+        paintHud()
+        val window = if (NativePtr.isSet(pendingNativeWindow)) {
+            pendingNativeWindow.also { pendingNativeWindow = NativePtr.NONE }
+        } else {
+            nativeWindowFromTexture(textureObject) ?: nativeWindowFromSurface(surface)
+        }
+        if (!NativePtr.isSet(window)) {
+            throw IllegalStateException(
+                "Android Surface не создал ANativeWindow: surfaceValid=${surface.isValid}, " +
+                    "fromSurface=${NativePtr.hex(lastSurfaceWindow)}"
+            )
+        }
+        nativeWindowHandle = window
+        KenjinxNative.nativeSurface = window
+        KenjinxNative.nativeWindow = window
+        core.deviceSetWindowHandle(window)
+        core.deviceSetSurfaceRotation(rotationDegrees())
+
+        val extensions = arrayOf("VK_KHR_surface", "VK_KHR_android_surface")
+        progressText = "создание Vulkan renderer"
+        paintHud()
+        if (!core.graphicsInitializeRenderer(extensions, extensions.size, 0L)) {
+            throw IllegalStateException("graphicsInitializeRenderer отказал")
+        }
+        rendererReady = true
+        core.graphicsRendererSetSize(width, height)
+
+        core.uiHandlerSetup()
+        installCallbacks()
+        progressText = "инициализация устройства"
+        paintHud()
+        if (!initializeDevice(core, settings)) {
+            throw IllegalStateException(
+                "deviceInitialize отказал: ${deviceInitError.ifBlank { "нет контекста эмуляции" }}"
+            )
+        }
+        firmwareInfo = firmwareVersion(core, home)
+        paintHud()
+    }
+
+    private fun paintHud() {
+        if (!::status.isInitialized || isFinishing) return
+        val fpsText = if (fps.isNaN()) "FPS: —" else "FPS: %.1f".format(Locale.US, fps)
+        val frameText = if (frameTime.isNaN()) "" else " · frame %.2f ms".format(Locale.US, frameTime)
+        val fifoText = if (fifo.isNaN()) "" else " · FIFO %.0f%%".format(Locale.US, fifo)
+        val progress = if (progressValue in 0f..1f) {
+            "$progressText · ${(progressValue * 100f).toInt()}%"
+        } else {
+            progressText
+        }
+        status.text = buildString {
+            append("Kenji Space ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · TextureView\n")
+            append(displayTitle)
+            append('\n')
+            append(dataSummary)
+            append('\n')
+            append(driverInfo)
+            append('\n')
+            append(firmwareInfo)
+            append('\n')
+            append(progress)
+            if (playing) {
+                append('\n')
+                append(fpsText)
+                append(frameText)
+                append(fifoText)
+            }
+        }
+    }
+
     private fun installCallbacks() {
         KenjinxNative.progressListener = { text, value ->
             if (text.isNotBlank()) progressText = text
@@ -531,7 +585,10 @@ class PlayerActivity : Activity() {
             // blocking message/confirm: the loader waits on this thread
             // until uiHandlerSetResponse. Swallowing it freezes on
             // «загрузка игры» with no FPS and no crash.
-            if (type == 1 || type == 2) {
+            // Dialogs need a pumping looper. During deviceInitialize / load
+            // we are inside a native call on the UI thread — posting a
+            // dialog deadlocks. Auto-answer until the game is running.
+            if ((type == 1 || type == 2) && playing) {
                 runOnUiThread {
                     if (shuttingDown.get() || isFinishing) {
                         runCatching { Kenji.core.uiHandlerSetResponse(false, "") }
@@ -742,33 +799,7 @@ class PlayerActivity : Activity() {
 
     private fun updateHud() {
         if (!::status.isInitialized) return
-        val fpsText = if (fps.isNaN()) "FPS: —" else "FPS: %.1f".format(Locale.US, fps)
-        val frameText = if (frameTime.isNaN()) "" else " · frame %.2f ms".format(Locale.US, frameTime)
-        val fifoText = if (fifo.isNaN()) "" else " · FIFO %.0f%%".format(Locale.US, fifo)
-        val progress = if (progressValue in 0f..1f) {
-            "$progressText · ${(progressValue * 100f).toInt()}%"
-        } else {
-            progressText
-        }
-        val text = buildString {
-            append("Kenji Space ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · TextureView\n")
-            append(displayTitle)
-            append('\n')
-            append(dataSummary)
-            append('\n')
-            append(driverInfo)
-            append('\n')
-            append(firmwareInfo)
-            append('\n')
-            append(progress)
-            if (playing) {
-                append('\n')
-                append(fpsText)
-                append(frameText)
-                append(fifoText)
-            }
-        }
-        runOnUiThread { if (!isFinishing) status.text = text }
+        runOnUiThread { paintHud() }
     }
 
     private fun showMenu() {
