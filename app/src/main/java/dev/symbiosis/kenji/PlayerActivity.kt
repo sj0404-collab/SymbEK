@@ -80,6 +80,8 @@ class PlayerActivity : Activity() {
     @Volatile private var frameTime = Double.NaN
     @Volatile private var fifo = Double.NaN
     @Volatile private var deviceInitError = ""
+    @Volatile private var lastTextureWindow = -1L
+    @Volatile private var lastSurfaceWindow = -1L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -168,6 +170,7 @@ class PlayerActivity : Activity() {
 
     private fun onTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
         releaseTextureSurface()
+        texture.setDefaultBufferSize(width.coerceAtLeast(128), height.coerceAtLeast(128))
         val createdSurface = Surface(texture)
         textureObject = texture
         textureSurface = createdSurface
@@ -298,7 +301,8 @@ class PlayerActivity : Activity() {
         }
         if (window <= 0L) {
             throw IllegalStateException(
-                "Android Surface не создал ANativeWindow: surfaceValid=${surface.isValid}"
+                "Android Surface не создал ANativeWindow: surfaceValid=${surface.isValid}, " +
+                    "textureWindow=$lastTextureWindow, surfaceWindow=$lastSurfaceWindow"
             )
         }
         nativeWindowHandle = window
@@ -574,18 +578,27 @@ class PlayerActivity : Activity() {
     private fun nativeWindowFromSurface(surface: Surface): Long {
         val safe = runCatching { NativeHelpers.instance.getNativeWindowSafe(surface) }
             .getOrDefault(-1L)
-        if (safe > 0L) return safe
+        if (safe > 0L) {
+            lastSurfaceWindow = safe
+            return safe
+        }
         // Keep the official path as a compatibility fallback for devices whose
         // linker exposes only the original helper entry point.
-        return runCatching { NativeHelpers.instance.getNativeWindow(surface) }
+        val official = runCatching { NativeHelpers.instance.getNativeWindow(surface) }
             .getOrDefault(-1L)
+        lastSurfaceWindow = official
+        return official
     }
 
     private fun nativeWindowFromTexture(texture: SurfaceTexture?): Long? {
-        if (texture == null) return null
+        if (texture == null) {
+            lastTextureWindow = -1L
+            return null
+        }
         val handle = runCatching {
             NativeHelpers.instance.getNativeWindowFromTexture(texture)
         }.getOrDefault(-1L)
+        lastTextureWindow = handle
         return handle.takeIf { it > 0L }
     }
 
