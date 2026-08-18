@@ -150,7 +150,10 @@ object DataSeed {
         } else {
             wipeEmptyBis(dest)
         }
-        if (dest.exists()) return false
+        if (dest.exists() && countKenji(File(dest, "system/Contents/registered")) < 5) {
+            if (isShortcut(dest)) dest.delete() else dest.deleteRecursively()
+        }
+        if (dest.exists()) return countKenji(File(dest, "system/Contents/registered")) >= 5
         dest.parentFile?.mkdirs()
         return try {
             Os.symlink(src.absolutePath, dest.absolutePath)
