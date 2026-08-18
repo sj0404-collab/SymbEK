@@ -24,9 +24,13 @@ nodpi = ROOT / "res" / "drawable-nodpi"
 nodpi.mkdir(parents=True, exist_ok=True)
 master.save(nodpi / "space_mark.png", "PNG")
 
-vec = ROOT / "res" / "drawable" / "ic_launcher_foreground.xml"
-if vec.exists():
-    vec.unlink()
+(ROOT / "res" / "drawable" / "ic_launcher_foreground.xml").write_text(
+    """<?xml version="1.0" encoding="utf-8"?>
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/space_mark"/>
+""",
+    encoding="utf-8",
+)
 
 (ROOT / "res" / "values" / "space_colors.xml").write_text(
     """<?xml version="1.0" encoding="utf-8"?>
