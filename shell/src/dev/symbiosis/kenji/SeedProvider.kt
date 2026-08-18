@@ -26,7 +26,6 @@ class SeedProvider : ContentProvider() {
                 }
                 DataSeed.pointHomeEarly(ctx)
                 BootLog.add("4. pointHomeEarly готово")
-                BootLog.startLogcat()
             } else {
                 BootLog.add("SeedProvider: context=null")
             }

@@ -371,7 +371,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     applyMode(activity)
                 } catch (_: Throwable) {
                 }
-                main.postAtTime(this, activity, android.os.SystemClock.uptimeMillis() + if (waitGame) 180 else 800)
+                val gap = if (playing) 2000 else if (waitGame) 400 else 1200
+                main.postAtTime(this, activity, android.os.SystemClock.uptimeMillis() + gap)
             }
         }
         main.postAtTime(tick, activity, android.os.SystemClock.uptimeMillis() + 600)
