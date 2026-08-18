@@ -12,6 +12,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -29,7 +30,6 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     private const val MUTED = 0xFFB8B8C4.toInt()
 
     @Volatile private var installed = false
-    @Volatile private var askedFiles = false
 
     fun install(app: Application) {
         if (installed) return
@@ -41,17 +41,26 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         if (activity.javaClass.name != "org.kenjinx.android.MainActivity") return
         activity.window?.decorView?.post {
             try {
-                AccessFix.repair(activity)
-                if (!askedFiles && !AccessFix.hasAllFiles()) {
-                    askedFiles = true
-                    AccessFix.askAllFiles(activity)
-                }
-                DataSeed.ensure(activity)
                 attach(activity)
             } catch (t: Throwable) {
                 android.util.Log.e("KenjiSpace", "overlay", t)
             }
         }
+        Thread({
+            try {
+                AccessFix.repair(activity)
+                DataSeed.ensure(activity)
+                activity.runOnUiThread {
+                    try {
+                        (activity.findViewById<ViewGroup>(android.R.id.content)
+                            ?.findViewWithTag<View>(TAG) as? Panel)?.refresh()
+                    } catch (_: Throwable) {
+                    }
+                }
+            } catch (t: Throwable) {
+                android.util.Log.e("KenjiSpace", "bg", t)
+            }
+        }, "kenji-seed").start()
     }
 
     override fun onActivityCreated(a: Activity, b: Bundle?) {}
@@ -69,18 +78,12 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
         val panel = Panel(activity)
         panel.tag = TAG
-        val first = if (content.childCount > 0) content.getChildAt(0) else null
-        if (first != null && first.tag != TAG) {
-            content.removeView(first)
-            val col = LinearLayout(activity)
-            col.orientation = LinearLayout.VERTICAL
-            col.layoutParams = ViewGroup.LayoutParams(-1, -1)
-            col.addView(panel, LinearLayout.LayoutParams(-1, -2))
-            col.addView(first, LinearLayout.LayoutParams(-1, 0, 1f))
-            content.addView(col)
-        } else {
-            content.addView(panel, 0, ViewGroup.LayoutParams(-1, -2))
-        }
+        val lp = if (content is FrameLayout)
+            FrameLayout.LayoutParams(-1, -2, Gravity.TOP)
+        else
+            ViewGroup.LayoutParams(-1, -2)
+        content.addView(panel, lp)
+        panel.elevation = 24f
         panel.refresh()
     }
 

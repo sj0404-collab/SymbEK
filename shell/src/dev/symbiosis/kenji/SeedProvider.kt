@@ -7,9 +7,8 @@ import android.net.Uri
 import android.util.Log
 
 /**
- * Runs before KenjinxApplication.
- * Restores stash, points bis/ at Eden nand via shortcuts, seeds QuickSettings.
- * Never throws into the official process.
+ * Before KenjinxApplication. Must stay cheap — a disk walk here
+ * freezes the first frame (white screen).
  */
 class SeedProvider : ContentProvider() {
     override fun onCreate(): Boolean {
@@ -17,9 +16,6 @@ class SeedProvider : ContentProvider() {
             val ctx = context
             if (ctx != null) {
                 WebWipe.run(ctx)
-                AccessFix.repair(ctx)
-                DataSeed.ensure(ctx)
-                SettingsBank.applyDefaultOnce(ctx)
                 val app = ctx.applicationContext
                 if (app is android.app.Application) SpaceHook.install(app)
             }
