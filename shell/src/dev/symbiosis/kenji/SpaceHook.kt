@@ -208,6 +208,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         if (game) {
             panel?.collapse()
             panel?.visibility = View.GONE
+            (load as? LoadBar)?.stop()
             load?.visibility = View.GONE
             hud?.visibility = View.VISIBLE
             hud?.start()
@@ -219,11 +220,13 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud?.visibility = View.GONE
             hud?.stop()
             load?.visibility = View.VISIBLE
+            (load as? LoadBar)?.start(loadingTitle(content) ?: "запуск")
             unshiftOfficial(content, panel)
         } else {
             panel?.visibility = View.VISIBLE
             hud?.visibility = View.GONE
             hud?.stop()
+            (load as? LoadBar)?.stop()
             load?.visibility = View.GONE
             if (panel != null) panel.post { shiftOfficial(content, panel) }
         }
@@ -462,14 +465,78 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         override fun onTouchEvent(event: MotionEvent): Boolean = false
         override fun onInterceptTouchEvent(ev: MotionEvent): Boolean = false
 
+        private val track: View
+        private val fill: View
+        private val label: TextView
+        private var running = false
+        private var shown = 0f
+        private var title = "запуск"
+        private val tick = object : Runnable {
+            override fun run() {
+                if (!running) return
+                val (target, step) = BootLog.stage()
+                val goal = target.toFloat()
+                shown += (goal - shown) * 0.2f
+                if (shown < goal) shown += 0.35f
+                if (shown > goal + 6f) shown = goal + 6f
+                val tw = track.width
+                if (tw > 0) {
+                    val w = ((tw - dp(4)) * (shown / 100f)).toInt().coerceAtLeast(dp(10))
+                    val p = fill.layoutParams
+                    if (p.width != w) {
+                        p.width = w
+                        fill.layoutParams = p
+                    }
+                }
+                label.text = String.format("%s  ·  %d%%  ·  %s", title, shown.toInt(), step)
+                main.postDelayed(this, 40)
+            }
+        }
+
         init {
             isClickable = false
             isFocusable = false
-            setBackgroundColor(0xE6111114.toInt())
-            val bar = View(host)
-            bar.setBackgroundColor(0xFF6E6E76.toInt())
-            val lp = LayoutParams(dp(220), dp(6), Gravity.CENTER)
-            addView(bar, lp)
+            setBackgroundColor(0xCC101014.toInt())
+            val box = LinearLayout(host)
+            box.orientation = LinearLayout.VERTICAL
+            box.gravity = Gravity.CENTER_HORIZONTAL
+            label = TextView(host)
+            label.setTextColor(0xFFE8E8EE.toInt())
+            label.setTypeface(Typeface.MONOSPACE)
+            label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            label.gravity = Gravity.CENTER
+            label.text = "запуск"
+            box.addView(label)
+            track = FrameLayout(host)
+            val tg = GradientDrawable()
+            tg.setColor(0xFF3A3A44.toInt())
+            tg.cornerRadius = dp(5).toFloat()
+            track.background = tg
+            val tlp = LinearLayout.LayoutParams(dp(240), dp(10))
+            tlp.topMargin = dp(10)
+            box.addView(track, tlp)
+            fill = View(host)
+            val fg = GradientDrawable()
+            fg.setColor(MINT)
+            fg.cornerRadius = dp(5).toFloat()
+            fill.background = fg
+            (track as FrameLayout).addView(fill, FrameLayout.LayoutParams(dp(12), -1, Gravity.START or Gravity.CENTER_VERTICAL))
+            addView(box, LayoutParams(-2, -2, Gravity.CENTER))
+        }
+
+        fun start(now: String) {
+            title = now.replace('\n', ' ').take(42)
+            if (running) return
+            running = true
+            shown = shown.coerceAtLeast(6f)
+            main.removeCallbacks(tick)
+            main.post(tick)
+        }
+
+        fun stop() {
+            running = false
+            main.removeCallbacks(tick)
+            shown = 0f
         }
 
         private fun dp(v: Int): Int =

@@ -67,6 +67,35 @@ object BootLog {
         return a
     }
 
+    /** 0–100 and a short live step name from boot + JNI lines. */
+    fun stage(): Pair<Int, String> {
+        val blob = (dump() + "\n" + kernelDump() + "\n" + lastKernel()).lowercase(Locale.US)
+        var pct = 8
+        var name = "старт"
+        val steps = arrayOf(
+            "seedprovider" to (12 to "процесс"),
+            "apppath" to (20 to "данные"),
+            "ключи" to (28 to "ключи"),
+            "ensure.готово" to (34 to "прошивка"),
+            "libkenjinx" to (40 to "библиотеки"),
+            "setuplogsdir" to (46 to "логи"),
+            "javainitialize" to (55 to "ядро"),
+            "deviceinitialize" to (68 to "устройство"),
+            "jnisetwindow" to (78 to "окно"),
+            "vulkan" to (88 to "vulkan"),
+            "mali" to (90 to "gpu"),
+            "textureview" to (94 to "экран"),
+            "surfaceview" to (94 to "экран"),
+        )
+        for ((key, pair) in steps) {
+            if (blob.contains(key)) {
+                pct = pair.first
+                name = pair.second
+            }
+        }
+        return pct to name
+    }
+
     private fun linesOf(src: List<String>): String =
         src.lastOrNull().orEmpty()
 
