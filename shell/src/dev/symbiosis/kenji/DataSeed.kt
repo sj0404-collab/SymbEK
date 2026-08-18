@@ -251,13 +251,14 @@ object DataSeed {
         try {
             val e = android.preference.PreferenceManager.getDefaultSharedPreferences(context).edit()
             listOf("AppPath", "appPath", "dataPath").forEach { key ->
-                // Do not override if they already point at a working tree.
                 e.putString(key, eden)
             }
             e.commit()
         } catch (_: Exception) {
         }
     }
+
+    private fun writePointer(context: Context, play: File) {
         val user = userKenjiDir(context) ?: return
         if (samePath(user, play)) return
         try {
