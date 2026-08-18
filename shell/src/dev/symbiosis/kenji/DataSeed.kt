@@ -144,6 +144,10 @@ object DataSeed {
             }
             e.commit()
             pointedEarly = true
+            try {
+                System.setProperty("user.home", home.absolutePath)
+            } catch (_: Throwable) {
+            }
             File(home, "system").mkdirs()
             ensureLogsDir(home)
             copyKey(File(appPath(context), "system/prod.keys"), File(home, "system/prod.keys"))

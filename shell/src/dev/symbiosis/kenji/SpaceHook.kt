@@ -1,6 +1,7 @@
 package dev.symbiosis.kenji
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.Application
 import android.content.Context
 import android.content.Intent
@@ -24,9 +25,9 @@ import android.widget.Toast
 import java.io.File
 
 /**
- * Library: thin status + game-folder FAB.
- * Loading: boot journal (order + firmware weight + kernel lines).
- * In-game: hide library chrome, show FPS + floating presets. Never re-seed bis.
+ * Library: one-line status. Journal is a dismissible dialog, not the panel.
+ * Game start / Loading: hide the panel so official UI is not blocked.
+ * In-game: FPS + presets. Never re-seed bis.
  */
 object SpaceHook : Application.ActivityLifecycleCallbacks {
     private const val TAG = "space-panel"
@@ -69,21 +70,6 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         return false
     }
 
-    private fun surfaceLabel(v: View?): String {
-        if (v == null) return "нет экрана"
-        val n = v.javaClass.simpleName
-        if (n.contains("TextureView") || n.contains("SurfaceView") ||
-            n.contains("GLSurface") || n.contains("Vulkan", true)
-        ) return n
-        if (v is ViewGroup) {
-            for (i in 0 until v.childCount) {
-                val s = surfaceLabel(v.getChildAt(i))
-                if (s != "нет экрана") return s
-            }
-        }
-        return "нет экрана"
-    }
-
     private fun loadingTitle(v: View?): String? {
         if (v is TextView) {
             val t = v.text?.toString().orEmpty()
@@ -100,16 +86,21 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         return null
     }
 
+    /** Loading is often a Dialog (separate window) — panel would stay up otherwise. */
+    private fun launching(activity: Activity, content: ViewGroup): Boolean {
+        if (!activity.hasWindowFocus()) return true
+        if (loadingTitle(content) != null) return true
+        if (loadingTitle(activity.window?.decorView) != null) return true
+        return false
+    }
+
     override fun onActivityCreated(a: Activity, b: Bundle?) {
         if (a.javaClass.name == "org.kenjinx.android.MainActivity") {
             BootLog.add("MainActivity.onCreate")
-        } else {
-            BootLog.add("activity ${a.javaClass.name}")
         }
     }
 
     override fun onActivityResumed(activity: Activity) {
-        BootLog.add("resume ${activity.javaClass.simpleName}")
         if (activity.javaClass.name != "org.kenjinx.android.MainActivity") return
         activity.window?.decorView?.post {
             try {
@@ -117,7 +108,6 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                 applyMode(activity)
             } catch (t: Throwable) {
                 android.util.Log.e("KenjiSpace", "overlay", t)
-                BootLog.add("overlay ${t.message}")
             }
         }
         if (!seeded && !inGame(activity)) {
@@ -126,7 +116,6 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             Thread({
                 try {
                     AccessFix.repair(activity)
-                    BootLog.add("фон AccessFix ок")
                     DataSeed.ensure(activity)
                     SettingsBank.enableFps(activity)
                     SettingsBank.applyDefaultOnce(activity)
@@ -134,8 +123,6 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     activity.runOnUiThread {
                         (activity.findViewById<ViewGroup>(android.R.id.content)
                             ?.findViewWithTag<View>(TAG) as? Panel)?.refresh()
-                        (activity.findViewById<ViewGroup>(android.R.id.content)
-                            ?.findViewWithTag<View>(TAG_BOOT) as? BootPane)?.refresh()
                     }
                 } catch (t: Throwable) {
                     android.util.Log.e("KenjiSpace", "bg", t)
@@ -147,10 +134,13 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     override fun onActivityPaused(activity: Activity) {
-        if (activity.javaClass.name == "org.kenjinx.android.MainActivity") {
-            main.removeCallbacksAndMessages(activity)
-            BootLog.add("pause MainActivity")
-        }
+        if (activity.javaClass.name != "org.kenjinx.android.MainActivity") return
+        main.removeCallbacksAndMessages(activity)
+        val content = activity.findViewById<ViewGroup>(android.R.id.content)
+        (content?.findViewWithTag<View>(TAG) as? Panel)?.collapse()
+        content?.findViewWithTag<View>(TAG)?.visibility = View.GONE
+        content?.findViewWithTag<View>(TAG_PLUS)?.visibility = View.GONE
+        if (content != null) unshiftOfficial(content, content.findViewWithTag(TAG))
     }
 
     private fun poll(activity: Activity) {
@@ -162,10 +152,10 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     applyMode(activity)
                 } catch (_: Throwable) {
                 }
-                main.postAtTime(this, activity, android.os.SystemClock.uptimeMillis() + 500)
+                main.postAtTime(this, activity, android.os.SystemClock.uptimeMillis() + 900)
             }
         }
-        main.postAtTime(tick, activity, android.os.SystemClock.uptimeMillis() + 400)
+        main.postAtTime(tick, activity, android.os.SystemClock.uptimeMillis() + 700)
     }
 
     override fun onActivityStarted(a: Activity) {}
@@ -215,26 +205,28 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     private fun applyMode(activity: Activity) {
         val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
         val game = inGame(activity)
-        val loading = loadingTitle(content)
+        val busy = launching(activity, content)
         DataSeed.allowEnsure = !game
-        val panel = content.findViewWithTag<View>(TAG)
+        val panel = content.findViewWithTag<View>(TAG) as? Panel
         val plus = content.findViewWithTag<View>(TAG_PLUS)
         val hud = content.findViewWithTag<View>(TAG_HUD) as? GameHud
         val boot = content.findViewWithTag<View>(TAG_BOOT) as? BootPane
         if (game) {
+            panel?.collapse()
             panel?.visibility = View.GONE
             plus?.visibility = View.GONE
             boot?.visibility = View.GONE
             hud?.visibility = View.VISIBLE
             hud?.startFps()
             unshiftOfficial(content, panel)
-        } else if (loading != null) {
+        } else if (busy) {
+            panel?.collapse()
             panel?.visibility = View.GONE
             plus?.visibility = View.GONE
             hud?.visibility = View.GONE
             hud?.stopFps()
             boot?.visibility = View.VISIBLE
-            boot?.refresh(loading, surfaceLabel(content))
+            boot?.refresh(loadingTitle(content) ?: "запуск…")
             unshiftOfficial(content, panel)
         } else {
             panel?.visibility = View.VISIBLE
@@ -243,7 +235,6 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud?.stopFps()
             boot?.visibility = View.GONE
             if (panel != null) panel.post { shiftOfficial(content, panel) }
-            (panel as? Panel)?.refreshQuiet()
         }
     }
 
@@ -270,13 +261,16 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     private fun shiftOfficial(content: ViewGroup, panel: View) {
         val h = panel.height
         if (h <= 0 || panel.visibility != View.VISIBLE) return
+        // Never push the official home off-screen if someone expanded the panel.
+        val cap = (content.height * 0.38f).toInt().coerceAtLeast(dp(content.context, 48))
+        val use = if (h > cap) cap else h
         for (i in 0 until content.childCount) {
             val v = content.getChildAt(i)
             if (v === panel || v.tag == TAG_PLUS || v.tag == TAG_HUD || v.tag == TAG_BOOT) continue
             val p = v.layoutParams
             if (p is FrameLayout.LayoutParams) {
-                if (p.topMargin != h) {
-                    p.topMargin = h
+                if (p.topMargin != use) {
+                    p.topMargin = use
                     v.layoutParams = p
                 }
             }
@@ -298,61 +292,40 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     private fun dp(c: Context, v: Int): Int =
         Math.round(v * c.resources.displayMetrics.density)
 
-    private class BootPane(private val host: Activity) : ScrollView(host) {
-        private val text: TextView
+    private class BootPane(private val host: Activity) : TextView(host) {
         override fun onTouchEvent(event: android.view.MotionEvent): Boolean = false
-        override fun onInterceptTouchEvent(ev: android.view.MotionEvent): Boolean = false
+        private var last = 0L
 
         init {
-            isFillViewport = false
             isClickable = false
             isFocusable = false
-            setBackgroundColor(0x99000000.toInt())
-            text = TextView(host)
-            text.setTextColor(0xFFF4F4F4.toInt())
-            text.setTypeface(Typeface.MONOSPACE)
-            text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-            text.setShadowLayer(3f, 0f, 0f, Color.BLACK)
-            text.setPadding(dp(10), dp(10), dp(10), dp(10))
-            addView(text, LayoutParams(-1, -2))
+            setTextColor(0xFFEDEDED.toInt())
+            setTypeface(Typeface.MONOSPACE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setShadowLayer(3f, 0f, 0f, Color.BLACK)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setBackgroundColor(0x66000000.toInt())
         }
 
-        fun refresh(loading: String? = null, surface: String = "нет экрана") {
-            text.text = buildReport(host, loading, surface)
+        fun refresh(loading: String) {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - last < 1200L && text.isNotEmpty()) return
+            last = now
+            val nca = DataSeed.firmwareNca(host)
+            val bytes = DataSeed.firmwareBytes(host)
+            val keys = File(DataSeed.playHome(host), "system/prod.keys")
+            val keysS = if (keys.isFile) BootLog.human(keys.length()) else "нет"
+            val k = BootLog.lastKernel()
+            text = buildString {
+                append(BootLog.versionLine).append(" · ").append(loading).append('\n')
+                append(nca).append(" NCA · ").append(BootLog.human(bytes))
+                    .append(" · ключи ").append(keysS).append('\n')
+                if (k.isNotEmpty()) append(k)
+            }
         }
 
         private fun dp(v: Int): Int =
             Math.round(v * resources.displayMetrics.density)
-    }
-
-    internal fun buildReport(host: Activity, loading: String?, surface: String): String {
-        val home = DataSeed.playHome(host)
-        val keys = File(home, "system/prod.keys")
-        val nca = DataSeed.firmwareNca(host)
-        val bytes = DataSeed.firmwareBytes(host)
-        val keysLine = if (keys.isFile && keys.length() > 100) {
-            "ключи: prod.keys ${keys.length()} Б (${BootLog.human(keys.length())})"
-        } else {
-            "ключи: нет в ${keys.absolutePath}"
-        }
-        val load = loading ?: ""
-        val sb = StringBuilder()
-        sb.append(BootLog.versionLine).append(" · ").append(surface).append('\n')
-        if (load.isNotEmpty()) sb.append(load).append('\n')
-        sb.append("данные: ").append(home.absolutePath).append('\n')
-        sb.append(keysLine).append('\n')
-        sb.append("прошивка: ").append(nca).append(" NCA · ").append(BootLog.human(bytes))
-            .append(" · ").append(DataSeed.firmwareMode(host)).append('\n')
-        sb.append("источник: ").append(DataSeed.firmwareSource(host)).append('\n')
-        sb.append(BootLog.deviceLine()).append('\n')
-        sb.append("— порядок запуска —\n")
-        sb.append(BootLog.dump()).append('\n')
-        val k = BootLog.kernelDump()
-        if (k.isNotEmpty()) {
-            sb.append("— ядро / JNI —\n")
-            sb.append(k)
-        }
-        return sb.toString()
     }
 
     private class Panel(private val host: Activity) : LinearLayout(host) {
@@ -365,7 +338,6 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         private val tabPresets: Button
         private var tab = 0
         private var open = false
-        private var lastPaint = 0L
 
         init {
             orientation = VERTICAL
@@ -388,8 +360,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
 
             status = TextView(host)
             status.setTextColor(MUTED)
-            status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-            status.setTypeface(Typeface.MONOSPACE)
+            status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             status.setPadding(0, dp(4), 0, dp(6))
             body.addView(status)
 
@@ -405,6 +376,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             bridges.orientation = VERTICAL
             bridges.addView(rowBtn("Папка Eden/files (оригинал прошивки)") { pick("eden") })
             bridges.addView(rowBtn("Папка игр (+)") { pick("games") })
+            bridges.addView(rowBtn("Журнал запуска") { showJournal() })
             bridges.addView(rowBtn("Починить всё", accent = true) { save() })
             body.addView(bridges)
 
@@ -412,6 +384,13 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             presets.orientation = VERTICAL
             presets.visibility = GONE
             body.addView(presets)
+        }
+
+        fun collapse() {
+            if (!open) return
+            open = false
+            body.visibility = GONE
+            summary.text = summary.text.toString().replace("свернуть", "развернуть")
         }
 
         private fun toggle() {
@@ -424,27 +403,11 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             }
         }
 
-        fun refreshQuiet() {
-            val now = android.os.SystemClock.uptimeMillis()
-            if (now - lastPaint < 1500L && !open) {
-                val nca = DataSeed.firmwareNca(host)
-                val fw = if (nca >= 5) {
-                    "$nca NCA · ${BootLog.human(DataSeed.firmwareBytes(host))}"
-                } else {
-                    "нет прошивки ($nca NCA)"
-                }
-                summary.text = "Kenji Space  ·  $fw  ·  ${if (open) "свернуть" else "развернуть"}"
-                return
-            }
-            refresh()
-        }
-
         fun refresh() {
-            lastPaint = android.os.SystemClock.uptimeMillis()
             val nca = DataSeed.firmwareNca(host)
             val bytes = DataSeed.firmwareBytes(host)
             val fw = if (nca >= 5) {
-                "$nca NCA · ${BootLog.human(bytes)} · ${DataSeed.firmwareMode(host)}"
+                "$nca NCA · ${BootLog.human(bytes)}"
             } else {
                 "нет прошивки ($nca NCA)"
             }
@@ -453,30 +416,43 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             val home = DataSeed.playHome(host)
             val keysFile = File(home, "system/prod.keys")
             val keys = if (keysFile.isFile && keysFile.length() > 100) {
-                "ключи ${keysFile.length()} Б (${BootLog.human(keysFile.length())})"
+                "ключи ${BootLog.human(keysFile.length())}"
             } else {
                 "нет ключей"
             }
             status.text = buildString {
-                append(BootLog.versionLine).append('\n')
-                append(keys).append('\n')
-                append("данные: ").append(home.absolutePath).append('\n')
-                append("прошивка: ").append(nca).append(" NCA · ").append(BootLog.human(bytes)).append('\n')
-                append("источник: ").append(DataSeed.firmwareSource(host)).append('\n')
-                append(AccessFix.statusLine(host)).append('\n')
-                append("— автопочинка —\n")
-                append(AutoFix.lastLog).append('\n')
-                append("— сканер —\n")
-                append(FirmwareHunt.lastReport).append('\n')
-                append("— порядок запуска —\n")
-                append(BootLog.dump()).append('\n')
-                val k = BootLog.kernelDump()
-                if (k.isNotEmpty()) {
-                    append("— ядро / JNI —\n")
-                    append(k)
-                }
+                append(keys).append(" · ").append(nca).append(" NCA · ").append(BootLog.human(bytes)).append('\n')
+                append(home.absolutePath).append('\n')
+                append(AccessFix.statusLine(host))
             }
             fillPresets()
+        }
+
+        private fun showJournal() {
+            val box = ScrollView(host)
+            val t = TextView(host)
+            t.setTextIsSelectable(true)
+            t.setTextColor(TEXT)
+            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            t.setTypeface(Typeface.MONOSPACE)
+            t.setPadding(dp(12), dp(12), dp(12), dp(12))
+            t.text = buildString {
+                append(BootLog.versionLine).append('\n')
+                append("прошивка: ").append(DataSeed.firmwareNca(host)).append(" NCA · ")
+                    .append(BootLog.human(DataSeed.firmwareBytes(host))).append('\n')
+                append("данные: ").append(DataSeed.playHome(host).absolutePath).append('\n')
+                append("— автопочинка —\n").append(AutoFix.lastLog).append('\n')
+                append("— сканер —\n").append(FirmwareHunt.lastReport).append('\n')
+                append("— порядок —\n").append(BootLog.dump()).append('\n')
+                val k = BootLog.kernelDump()
+                if (k.isNotEmpty()) append("— ядро —\n").append(k)
+            }
+            box.addView(t)
+            AlertDialog.Builder(host)
+                .setTitle("журнал запуска")
+                .setView(box)
+                .setPositiveButton("закрыть", null)
+                .show()
         }
 
         private fun show(which: Int) {

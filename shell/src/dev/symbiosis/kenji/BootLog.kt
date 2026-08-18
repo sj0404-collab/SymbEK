@@ -52,10 +52,23 @@ object BootLog {
         return a.joinToString("\n")
     }
 
+    fun tail(n: Int): String {
+        val a = synchronized(lines) { lines.toList() }
+        return a.takeLast(n).joinToString("\n")
+    }
+
     fun kernelDump(): String {
         val a = synchronized(kernel) { kernel.toList() }
         return a.takeLast(18).joinToString("\n")
     }
+
+    fun lastKernel(): String {
+        val a = synchronized(kernel) { linesOf(kernel) }
+        return a
+    }
+
+    private fun linesOf(src: List<String>): String =
+        src.lastOrNull().orEmpty()
 
     fun captureVersion(context: Context) {
         try {
