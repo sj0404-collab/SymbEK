@@ -95,11 +95,42 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             waitGame = false
             return false
         }
-        if (!activity.hasWindowFocus()) waitGame = true
-        if (loadingTitle(content) != null) waitGame = true
-        if (loadingTitle(activity.window?.decorView) != null) waitGame = true
-        if (officialLoaderVisible()) waitGame = true
+        val title = loadingTitle(content) ?: loadingTitle(activity.window?.decorView)
+        val gameLoad = title != null && looksGameLoad(title)
+        if (gameLoad) {
+            waitGame = true
+            return true
+        }
+        if (waitGame && looksLikeLibrary(content)) {
+            waitGame = false
+            return false
+        }
         return waitGame
+    }
+
+    private fun looksGameLoad(title: String): Boolean {
+        val t = title.replace('\n', ' ').trim()
+        if (!t.contains("Loading", ignoreCase = true) && !t.contains("Загрузка", ignoreCase = true)) return false
+        val rest = t.replace("Loading", "", ignoreCase = true)
+            .replace("Загрузка", "", ignoreCase = true)
+            .trim()
+        return rest.length >= 2
+    }
+
+    private fun looksLikeLibrary(root: View?): Boolean {
+        if (root == null) return false
+        if (findText(root, "Search") || findText(root, "Unknown") || findText(root, "Kenji Space")) return true
+        return false
+    }
+
+    private fun findText(v: View, needle: String): Boolean {
+        if (v is TextView && v.text?.toString()?.contains(needle, ignoreCase = true) == true) return true
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) {
+                if (findText(v.getChildAt(i), needle)) return true
+            }
+        }
+        return false
     }
 
     private fun officialLoaderVisible(): Boolean {
@@ -192,6 +223,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
 
     override fun onActivityCreated(a: Activity, b: Bundle?) {
         if (a.javaClass.name == "org.kenjinx.android.MainActivity") {
+            waitGame = false
             BootLog.add("MainActivity.onCreate")
         }
     }
