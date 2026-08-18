@@ -35,7 +35,7 @@ import java.io.File
 object SpaceHook : Application.ActivityLifecycleCallbacks {
     private const val TAG = "space-panel"
     private const val TAG_HUD = "space-hud"
-    private const val TAG_LOAD = "space-load"
+    internal const val TAG_LOAD = "space-load"
     private const val TAG_INJECT = "space-load-inject"
     private const val MINT = 0xFF5EF0E6.toInt()
     private const val RED = 0xFFFF3B30.toInt()
@@ -232,6 +232,10 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
         return false
     }
+
+    internal fun allWindowsPublic(): List<View> = allWindows()
+    internal fun isSpaceView(v: View): Boolean = ours(v)
+    internal fun isLibraryWindow(v: View): Boolean = looksLikeLibrary(v) || isOurDialog(v)
 
     private fun allWindows(): List<View> {
         return try {
@@ -434,6 +438,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             panel?.visibility = View.GONE
             (load as? LoadBar)?.stop()
             load?.visibility = View.GONE
+            LoadOverlay.hide(activity)
             stripInjected()
             hud?.visibility = View.VISIBLE
             hud?.start()
@@ -445,8 +450,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             panel?.visibility = View.GONE
             hud?.visibility = View.GONE
             hud?.stop()
-            load?.visibility = View.VISIBLE
-            (load as? LoadBar)?.start(scrapeLoadingTitle() ?: loadingTitle(content) ?: "загрузка игры")
+            load?.visibility = View.GONE
+            LoadOverlay.show(activity, scrapeLoadingTitle() ?: loadingTitle(content) ?: "загрузка игры")
             hideOfficialLoader(activity)
             unshiftOfficial(content, panel)
         } else {
@@ -455,6 +460,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud?.stop()
             (load as? LoadBar)?.stop()
             load?.visibility = View.GONE
+            LoadOverlay.hide(activity)
             stripInjected()
             if (panel != null) panel.post { shiftOfficial(content, panel) }
         }
@@ -532,6 +538,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         BootLog.add("тап по обложке → наш индикатор")
         try {
             applyMode(activity)
+            LoadOverlay.show(activity, name)
             hideOfficialLoader(activity)
         } catch (_: Throwable) {
         }
@@ -722,9 +729,9 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         return b
     }
 
-    private class LoadBar(host: Activity) : FrameLayout(host) {
-        override fun onTouchEvent(event: MotionEvent): Boolean = false
-        override fun onInterceptTouchEvent(ev: MotionEvent): Boolean = false
+    class LoadBar(host: Activity) : FrameLayout(host) {
+        override fun onTouchEvent(event: MotionEvent): Boolean = true
+        override fun onInterceptTouchEvent(ev: MotionEvent): Boolean = true
 
         private val titleView: TextView
         private val meta: TextView
