@@ -7,49 +7,6 @@ import java.util.Locale
 
 /** Mods / saves / cheats stay on disk. We only list them in-place. */
 object GameExtra {
-    fun readyToStart(context: Context): Boolean =
-        DataSeed.keysOk(context) && DataSeed.firmwareNca(context) >= 5 && coversOk(context)
-
-    fun coversOk(context: Context): Boolean {
-        for (dir in gameDirs(context)) {
-            if (countGames(dir, 0) > 0) return true
-        }
-        return false
-    }
-
-    private fun gameDirs(context: Context): List<File> {
-        val out = ArrayList<File>()
-        val p = PreferenceManager.getDefaultSharedPreferences(context)
-        p.getString("gameFolderPath", null)?.let { if (it.isNotBlank()) out.add(File(it)) }
-        try {
-            val uri = p.getString("gameFolder", null)
-            if (!uri.isNullOrBlank() && uri.startsWith("/")) out.add(File(uri))
-        } catch (_: Throwable) {
-        }
-        val sd = android.os.Environment.getExternalStorageDirectory()
-        out.add(File(sd, "Download/ed"))
-        return out
-    }
-
-    private fun countGames(dir: File, depth: Int): Int {
-        if (depth > 2 || !dir.isDirectory) return 0
-        var n = 0
-        val kids = dir.listFiles() ?: return 0
-        for (f in kids) {
-            val low = f.name.lowercase(Locale.US)
-            if (f.isFile && (low.endsWith(".nsp") || low.endsWith(".xci") ||
-                    low.endsWith(".nsz") || low.endsWith(".xcz"))
-            ) {
-                n++
-                if (n > 0) return n
-            } else if (f.isDirectory && depth < 2 && !f.name.startsWith(".")) {
-                n += countGames(f, depth + 1)
-                if (n > 0) return n
-            }
-        }
-        return n
-    }
-
     data class Bucket(val title: String, val path: String, val count: Int, val bytes: Long)
 
     fun lastTitleId(context: Context): String {

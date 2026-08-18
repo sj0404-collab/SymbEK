@@ -1,42 +1,55 @@
 package dev.symbiosis.kenji
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.util.TypedValue
+import android.view.Choreographer
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import java.io.File
 
 /**
- * In the official player: pocket load timer (Eden-style) + floating presets.
- * No extra windows, no FLAG_SECURE, no walking other apps.
+ * Launcher: compact panel + add-folder inside it.
+ * Loading: only our live bar; official Kenji dialog is hidden.
+ * In-game: hideable FAB, red stats, bottom overlay (pause, not stop).
  */
 object SpaceHook : Application.ActivityLifecycleCallbacks {
-    private const val TAG_PRESET = "space-preset"
-    private const val TAG_TIMER = "space-timer"
+    private const val TAG = "space-panel"
+    private const val TAG_HUD = "space-hud"
+    internal const val TAG_LOAD = "space-load"
+    private const val TAG_INJECT = "space-load-inject"
     private const val MINT = 0xFF5EF0E6.toInt()
+    private const val RED = 0xFFFF3B30.toInt()
+    private const val BG = 0xFF2A2A32.toInt()
+    private const val CARD = 0xFF3A3A44.toInt()
+    private const val TEXT = 0xFFF2F2F6.toInt()
     private const val MUTED = 0xFFB8B8C4.toInt()
 
     @Volatile private var installed = false
+    @Volatile private var seeded = false
+    @Volatile private var waitGame = false
     @Volatile private var playing = false
-    @Volatile private var waitTimer = false
+    @Volatile private var tappedAt = 0L
     private val main = Handler(Looper.getMainLooper())
 
     fun install(app: Application) {
@@ -46,159 +59,220 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         BootLog.add("SpaceHook: колбэки активности")
     }
 
-    fun armTimer() {
-        waitTimer = true
-        playing = false
-    }
-
     fun isPlaying(): Boolean = playing
-    fun waitingForGame(): Boolean = waitTimer && !playing
 
-    override fun onActivityCreated(a: Activity, b: Bundle?) {
-        if (a.javaClass.name == "org.kenjinx.android.MainActivity") {
-            playing = false
-            BootLog.add("MainActivity.onCreate")
-        }
+    fun inGame(ctx: Context): Boolean {
+        val act = ctx as? Activity ?: return false
+        return hasGameSurface(act.findViewById(android.R.id.content)) ||
+            hasGameSurface(act.window?.decorView)
     }
 
-    override fun onActivityResumed(activity: Activity) {
-        unlock(activity)
-        if (activity.javaClass.name != "org.kenjinx.android.MainActivity") return
-        activity.window?.decorView?.post {
-            try {
-                attach(activity)
-                apply(activity)
-            } catch (t: Throwable) {
-                android.util.Log.e("KenjiSpace", "hook", t)
-            }
-        }
-        poll(activity)
-    }
-
-    override fun onActivityPaused(activity: Activity) {
-        if (activity.javaClass.name != "org.kenjinx.android.MainActivity") return
-        main.removeCallbacksAndMessages(activity)
-    }
-
-    override fun onActivityStarted(a: Activity) {}
-    override fun onActivityStopped(a: Activity) {}
-    override fun onActivitySaveInstanceState(a: Activity, o: Bundle) {}
-    override fun onActivityDestroyed(a: Activity) {}
-
-    private fun unlock(activity: Activity) {
-        try {
-            activity.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        } catch (_: Throwable) {
-        }
-    }
-
-    private fun poll(activity: Activity) {
-        main.removeCallbacksAndMessages(activity)
-        val tick = object : Runnable {
-            override fun run() {
-                if (activity.isFinishing) return
-                try {
-                    apply(activity)
-                } catch (_: Throwable) {
-                }
-                val gap = if (waitTimer && !playing) 400L else 1200L
-                main.postAtTime(this, activity, SystemClock.uptimeMillis() + gap)
-            }
-        }
-        main.postAtTime(tick, activity, SystemClock.uptimeMillis() + 400)
-    }
-
-    private fun attach(activity: Activity) {
-        val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
-        if (content.findViewWithTag<View>(TAG_TIMER) == null) {
-            val timer = TimerBall(activity)
-            timer.tag = TAG_TIMER
-            val lp = FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
-            lp.bottomMargin = dp(activity, 88)
-            content.addView(timer, lp)
-            timer.elevation = 20f
-            timer.visibility = View.GONE
-        }
-        if (content.findViewWithTag<View>(TAG_PRESET) == null) {
-            val fab = PresetFab(activity)
-            fab.tag = TAG_PRESET
-            content.addView(fab, FrameLayout.LayoutParams(-1, -1))
-            fab.elevation = 20f
-            fab.visibility = View.GONE
-        }
-    }
-
-    private fun apply(activity: Activity) {
-        unlock(activity)
-        val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
-        val surface = hasGameSurface(content) || hasGameSurface(activity.window?.decorView)
-        if (surface) playing = true
-        DataSeed.allowEnsure = !playing
-        val preset = content.findViewWithTag<View>(TAG_PRESET) as? PresetFab
-        val timer = content.findViewWithTag<View>(TAG_TIMER) as? TimerBall
-        if (waitTimer) hideOfficialLoading(activity)
-        if (playing) {
-            preset?.visibility = View.VISIBLE
-            if (waitTimer) {
-                timer?.showRunning()
-                if (timer?.heardAudio() == true) {
-                    waitTimer = false
-                    timer.dismiss()
-                }
-            } else {
-                timer?.dismiss()
-            }
-        } else {
-            preset?.hideSheet()
-            preset?.visibility = View.GONE
-            if (waitTimer) {
-                timer?.showRunning()
-                if (timer?.heardAudio() == true) {
-                    waitTimer = false
-                    timer.dismiss()
-                }
-            } else {
-                timer?.dismiss()
-            }
-        }
-    }
-
-    /** Hide Kenji's gray Loading window. We only keep the pocket timer. */
-    private fun hideOfficialLoading(activity: Activity) {
-        try {
-            val decor = activity.window?.decorView
-            for (v in windowViews()) {
-                if (v === decor) continue
-                if (hasLoadingMark(v)) {
-                    v.visibility = View.GONE
-                    v.alpha = 0f
-                }
-            }
-        } catch (_: Throwable) {
-        }
-    }
-
-    private fun hasLoadingMark(v: View?): Boolean {
+    internal fun hasGameSurface(v: View?): Boolean {
         if (v == null) return false
-        if (v is TextView) {
-            val t = v.text?.toString().orEmpty()
-            if (t.contains("Loading", true) || t.contains("Загрузка")) return true
-        }
         val n = v.javaClass.name
-        if (n.contains("LinearProgress") || n.contains("CircularProgress") ||
-            n.contains("LoadingIndicator")
-        ) return true
+        val surface = n.contains("SurfaceView") || n.contains("GLSurface") ||
+            n.contains("Vulkan", true) || n.contains("TextureView") ||
+            n.contains("SurfaceControl") || n.contains("NativeSurface")
+        if (surface && v.width > 200 && v.height > 200) return true
         if (v is ViewGroup) {
-            for (i in 0 until v.childCount) if (hasLoadingMark(v.getChildAt(i))) return true
+            for (i in 0 until v.childCount) {
+                if (hasGameSurface(v.getChildAt(i))) return true
+            }
         }
         return false
     }
 
-    private fun windowViews(): List<View> {
+    private fun loadingTitle(v: View?): String? {
+        if (v is TextView) {
+            val t = v.text?.toString().orEmpty()
+            if (t.contains("Loading", ignoreCase = true) || t.contains("Загрузка", ignoreCase = true)) {
+                return t.replace('\n', ' ').trim()
+            }
+        }
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) {
+                val t = loadingTitle(v.getChildAt(i))
+                if (t != null) return t
+            }
+        }
+        return null
+    }
+
+    private fun launching(activity: Activity, content: ViewGroup): Boolean {
+        if (playing) {
+            waitGame = false
+            return false
+        }
+        if (hasGameSurface(content) || hasGameSurface(activity.window?.decorView)) {
+            playing = true
+            waitGame = false
+            return false
+        }
+        if (waitGame) {
+            // Library stays under the official Compose dialog — never drop
+            // waitGame just because Search / our panel are still in the tree.
+            val age = android.os.SystemClock.elapsedRealtime() - tappedAt
+            if (age > 120_000L && !officialGameDialog() && looksLikeLibrary(content)) {
+                waitGame = false
+                return false
+            }
+            return true
+        }
+        val title = scrapeLoadingTitle()
+        if ((title != null && looksGameLoad(title)) || officialGameDialog()) {
+            waitGame = true
+            return true
+        }
+        return false
+    }
+
+    private fun looksGameLoad(title: String): Boolean {
+        val t = title.replace('\n', ' ').trim()
+        if (!t.contains("Loading", ignoreCase = true) && !t.contains("Загрузка", ignoreCase = true)) return false
+        val rest = t.replace("Loading", "", ignoreCase = true)
+            .replace("Загрузка", "", ignoreCase = true)
+            .trim()
+        return rest.length >= 2
+    }
+
+    private fun scrapeLoadingTitle(): String? {
+        for (root in allWindows()) {
+            val t = loadingTitle(root)
+            if (t != null && looksGameLoad(t)) return t
+        }
+        return null
+    }
+
+    private fun officialGameDialog(): Boolean {
+        if (playing) return false
+        for (root in allWindows()) {
+            if (ours(root) || isOurDialog(root)) continue
+            if (hasGameSurface(root)) continue
+            if (findOfficialLoader(root, 0)) return true
+            if (isKenjiLoadWindow(root)) return true
+            if (isExtraDialogWindow(root)) return true
+        }
+        return false
+    }
+
+    /** Compose Loading is often one MATCH_PARENT window with no TextView children. */
+    private fun isExtraDialogWindow(root: View): Boolean {
+        val lp = root.layoutParams as? WindowManager.LayoutParams ?: return false
+        val type = lp.type
+        val dialogish = type == WindowManager.LayoutParams.TYPE_APPLICATION ||
+            type == WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG ||
+            type == WindowManager.LayoutParams.TYPE_APPLICATION_PANEL ||
+            type == WindowManager.LayoutParams.TYPE_APPLICATION_SUB_PANEL
+        if (!dialogish) return false
+        val title = lp.title?.toString().orEmpty()
+        if (title.contains("kenji-space", ignoreCase = true)) return false
+        return true
+    }
+
+    private fun isKenjiLoadWindow(root: View): Boolean {
+        if (looksLikeLibrary(root)) return false
+        if (isFullScreen(root)) {
+            return hasTinyCard(root, 0)
+        }
+        val dm = root.resources.displayMetrics
+        val w = root.width / dm.density
+        val h = root.height / dm.density
+        return w in 140f..480f && h in 70f..320f
+    }
+
+    private fun hasTinyCard(v: View, depth: Int): Boolean {
+        if (depth > 10 || ours(v)) return false
+        val dm = v.resources.displayMetrics
+        if (v.width > 0 && v.height > 0) {
+            val w = v.width / dm.density
+            val h = v.height / dm.density
+            if (w in 160f..420f && h in 80f..260f) return true
+        }
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) {
+                if (hasTinyCard(v.getChildAt(i), depth + 1)) return true
+            }
+        }
+        return false
+    }
+
+    private fun isFullScreen(v: View): Boolean {
+        val dm = v.resources.displayMetrics
+        return v.width >= dm.widthPixels * 8 / 10 && v.height >= dm.heightPixels * 7 / 10
+    }
+
+    private fun isOurDialog(root: View): Boolean =
+        findText(root, "карточка игры") || findText(root, "журнал запуска") ||
+            findText(root, "настройки игры")
+
+    private fun looksLikeLibrary(root: View?): Boolean {
+        if (root == null) return false
+        // Do not match our own panel text ("Kenji Space") — that made the
+        // activity look like the shelf while Loading BLADE CHIMERA was up.
+        return findText(root, "Search")
+    }
+
+    private fun findText(v: View, needle: String): Boolean {
+        if (v is TextView && v.text?.toString()?.contains(needle, ignoreCase = true) == true) return true
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) {
+                if (findText(v.getChildAt(i), needle)) return true
+            }
+        }
+        return false
+    }
+
+    private fun officialLoaderVisible(): Boolean {
+        for (root in allWindows()) {
+            if (ours(root)) continue
+            if (findOfficialLoader(root, 0)) return true
+        }
+        return false
+    }
+
+    private fun findOfficialLoader(v: View, depth: Int): Boolean {
+        if (depth > 14 || ours(v)) return false
+        if (looksOfficialLoader(v)) return true
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) {
+                if (findOfficialLoader(v.getChildAt(i), depth + 1)) return true
+            }
+        }
+        return false
+    }
+
+    private fun looksOfficialLoader(v: View): Boolean {
+        val n = v.javaClass.name
+        if (n.contains("ProgressBar") || n.contains("CircularProgress") ||
+            n.contains("LinearProgress") || n.contains("LoadingIndicator")
+        ) return true
+        if (v is TextView) {
+            val t = v.text?.toString().orEmpty()
+            if (t.contains("Loading", true) || t.contains("Загрузка")) return true
+        }
+        return false
+    }
+
+    private fun ours(v: View): Boolean {
+        var p: View? = v
+        repeat(12) {
+            val cur = p ?: return false
+            val t = cur.tag
+            if (t == TAG || t == TAG_HUD || t == TAG_LOAD || t == TAG_INJECT) return true
+            p = cur.parent as? View
+        }
+        return false
+    }
+
+    internal fun allWindowsPublic(): List<View> = allWindows()
+    internal fun isSpaceView(v: View): Boolean = ours(v)
+    internal fun isLibraryWindow(v: View): Boolean = looksLikeLibrary(v) || isOurDialog(v)
+
+    private fun allWindows(): List<View> {
         return try {
-            val cls = Class.forName("android.view.WindowManagerGlobal")
-            val inst = cls.getMethod("getInstance").invoke(null)
-            val f = cls.getDeclaredField("mViews")
+            val cl = Class.forName("android.view.WindowManagerGlobal")
+            val inst = cl.getMethod("getInstance").invoke(null)
+            val f = cl.getDeclaredField("mViews")
             f.isAccessible = true
             when (val raw = f.get(inst)) {
                 is List<*> -> raw.filterIsInstance<View>()
@@ -210,215 +284,1002 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
     }
 
-    private fun hasGameSurface(v: View?): Boolean {
-        if (v == null) return false
-        val n = v.javaClass.name
-        val surface = n.contains("SurfaceView") || n.contains("GLSurface") ||
-            n.contains("Vulkan", true) || n.contains("TextureView") ||
-            n.contains("NativeSurface")
-        if (surface && v.width > 200 && v.height > 200) return true
+    private fun hideOfficialLoader() {
+        hideOfficialLoader(null)
+    }
+
+    private fun hideOfficialLoader(host: Activity?) {
+        if (host != null) LoadOverlay.buryKenji(host)
+    }
+
+    private fun plantLoader(host: Activity, vg: ViewGroup) {
+        var bar = vg.findViewWithTag<View>(TAG_INJECT) as? LoadBar
+        if (bar == null) {
+            bar = LoadBar(host)
+            bar.tag = TAG_INJECT
+            vg.addView(bar, ViewGroup.LayoutParams(-1, -1))
+        }
+        bar.visibility = View.VISIBLE
+        bar.bringToFront()
+        bar.elevation = 128f
+        bar.start(scrapeLoadingTitle() ?: "загрузка игры")
+    }
+
+    private fun stripInjected() {
+        try {
+            for (root in allWindows()) {
+                val vg = root as? ViewGroup ?: continue
+                val bar = vg.findViewWithTag<View>(TAG_INJECT) ?: continue
+                vg.removeView(bar)
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun buryOfficialLoader(v: View, depth: Int) {
+        if (depth > 16 || ours(v)) return
+        if (looksOfficialLoader(v)) {
+            var p: View = v
+            repeat(8) {
+                val par = p.parent as? View ?: return@repeat
+                if (ours(par)) return@repeat
+                p = par
+            }
+            if (!ours(p)) {
+                p.alpha = 0f
+                p.visibility = View.GONE
+            }
+            return
+        }
         if (v is ViewGroup) {
-            for (i in 0 until v.childCount) if (hasGameSurface(v.getChildAt(i))) return true
+            for (i in 0 until v.childCount) buryOfficialLoader(v.getChildAt(i), depth + 1)
+        }
+    }
+
+    override fun onActivityCreated(a: Activity, b: Bundle?) {
+        if (a.javaClass.name == "org.kenjinx.android.MainActivity") {
+            waitGame = false
+            playing = false
+            BootLog.add("MainActivity.onCreate")
+        }
+    }
+
+    override fun onActivityResumed(activity: Activity) {
+        if (activity.javaClass.name != "org.kenjinx.android.MainActivity") return
+        hookWindow(activity)
+        activity.window?.decorView?.post {
+            try {
+                attach(activity)
+                applyMode(activity)
+            } catch (t: Throwable) {
+                android.util.Log.e("KenjiSpace", "overlay", t)
+            }
+        }
+        if (!seeded && !inGame(activity)) {
+            seeded = true
+            Thread({
+                try {
+                    AccessFix.repair(activity)
+                    DataSeed.ensure(activity)
+                    SettingsBank.applyDefaultOnce(activity)
+                    SettingsBank.enableFps(activity)
+                    activity.runOnUiThread {
+                        (activity.findViewById<ViewGroup>(android.R.id.content)
+                            ?.findViewWithTag<View>(TAG) as? Panel)?.refresh()
+                    }
+                } catch (t: Throwable) {
+                    android.util.Log.e("KenjiSpace", "bg", t)
+                }
+            }, "kenji-seed").start()
+        }
+        poll(activity)
+    }
+
+    override fun onActivityPaused(activity: Activity) {
+        if (activity.javaClass.name != "org.kenjinx.android.MainActivity") return
+        main.removeCallbacksAndMessages(activity)
+        val content = activity.findViewById<ViewGroup>(android.R.id.content)
+        (content?.findViewWithTag<View>(TAG) as? Panel)?.collapse()
+        content?.findViewWithTag<View>(TAG)?.visibility = View.GONE
+        if (content != null) unshiftOfficial(content, content.findViewWithTag(TAG))
+    }
+
+    private fun poll(activity: Activity) {
+        main.removeCallbacksAndMessages(activity)
+        val tick = object : Runnable {
+            override fun run() {
+                if (activity.isFinishing) return
+                try {
+                    applyMode(activity)
+                } catch (_: Throwable) {
+                }
+                val gap = if (playing) 2500 else if (waitGame) 250 else 1500
+                main.postAtTime(this, activity, android.os.SystemClock.uptimeMillis() + gap)
+            }
+        }
+        main.postAtTime(tick, activity, android.os.SystemClock.uptimeMillis() + 600)
+    }
+
+    override fun onActivityStarted(a: Activity) {}
+    override fun onActivityStopped(a: Activity) {}
+    override fun onActivitySaveInstanceState(a: Activity, o: Bundle) {}
+    override fun onActivityDestroyed(a: Activity) {}
+
+    private fun hookWindow(activity: Activity) {
+        val w = activity.window ?: return
+        if (w.callback is CoverHold) return
+        w.callback = CoverHold(activity, w.callback)
+    }
+
+    private fun attach(activity: Activity) {
+        val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
+        if (content.findViewWithTag<View>(TAG) == null) {
+            val panel = Panel(activity)
+            panel.tag = TAG
+            val lp = if (content is FrameLayout)
+                FrameLayout.LayoutParams(-1, -2, Gravity.TOP)
+            else ViewGroup.LayoutParams(-1, -2)
+            content.addView(panel, lp)
+            panel.elevation = 8f
+            panel.refresh()
+            panel.post { shiftOfficial(content, panel) }
+        }
+        if (content.findViewWithTag<View>(TAG_HUD) == null) {
+            val hud = PlayHud(activity)
+            hud.tag = TAG_HUD
+            hud.visibility = View.GONE
+            content.addView(hud, FrameLayout.LayoutParams(-1, -1))
+            hud.elevation = 26f
+        }
+        if (content.findViewWithTag<View>(TAG_LOAD) == null) {
+            val load = LoadBar(activity)
+            load.tag = TAG_LOAD
+            load.visibility = View.GONE
+            content.addView(load, FrameLayout.LayoutParams(-1, -1))
+            load.elevation = 96f
+            load.translationZ = 96f
+        }
+    }
+
+    private fun applyMode(activity: Activity) {
+        try {
+            activity.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } catch (_: Throwable) {
+        }
+        val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
+        val surface = hasGameSurface(content) || hasGameSurface(activity.window?.decorView)
+        if (surface) playing = true
+        if (playing && looksLikeLibrary(content) && !surface && !waitGame) {
+            playing = false
+        }
+        val game = playing || surface
+        val busy = !playing && launching(activity, content)
+        DataSeed.allowEnsure = !game
+        val panel = content.findViewWithTag<View>(TAG) as? Panel
+        val hud = content.findViewWithTag<View>(TAG_HUD) as? PlayHud
+        val load = content.findViewWithTag<View>(TAG_LOAD)
+        if (game) {
+            playing = true
+            waitGame = false
+            panel?.collapse()
+            panel?.visibility = View.GONE
+            load?.visibility = View.GONE
+            stripInjected()
+            hud?.visibility = View.VISIBLE
+            hud?.start()
+            unshiftOfficial(content, panel)
+            LoadOverlay.buryKenji(activity)
+        } else if (busy) {
+            waitGame = true
+            panel?.collapse()
+            panel?.visibility = View.GONE
+            hud?.visibility = View.GONE
+            hud?.stop()
+            load?.visibility = View.GONE
+            LoadOverlay.show(activity, scrapeLoadingTitle() ?: loadingTitle(content) ?: "загрузка игры")
+            hideOfficialLoader(activity)
+            unshiftOfficial(content, panel)
+        } else {
+            panel?.visibility = View.VISIBLE
+            hud?.visibility = View.GONE
+            hud?.stop()
+            (load as? LoadBar)?.stop()
+            load?.visibility = View.GONE
+            LoadOverlay.hide(activity)
+            stripInjected()
+            if (panel != null) panel.post { shiftOfficial(content, panel) }
+        }
+    }
+
+    private fun hideOfficialBottomHud(root: ViewGroup) {
+        try {
+            walkHide(root, 0)
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun walkHide(v: View, depth: Int) {
+        if (depth > 14) return
+        if (v.tag == TAG || v.tag == TAG_HUD || v.tag == TAG_LOAD) return
+        val n = v.javaClass.name
+        if (v is TextView) {
+            val t = v.text?.toString().orEmpty()
+            if (t.startsWith("FPS") || t.contains("Kenji-NX") || t == "≡") {
+                v.visibility = View.INVISIBLE
+            }
+        }
+        if (n.contains("Overlay", true) && v !is PlayHud) {
+            if (v.width in 1..400 && v.height in 1..120) v.visibility = View.INVISIBLE
+        }
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) walkHide(v.getChildAt(i), depth + 1)
+        }
+    }
+
+    private fun shiftOfficial(content: ViewGroup, panel: View) {
+        val h = panel.height
+        if (h <= 0 || panel.visibility != View.VISIBLE) return
+        val cap = (content.height * 0.34f).toInt().coerceAtLeast(dp(content.context, 44))
+        val use = if (h > cap) cap else h
+        for (i in 0 until content.childCount) {
+            val v = content.getChildAt(i)
+            if (v === panel || v.tag == TAG_HUD || v.tag == TAG_LOAD) continue
+            val p = v.layoutParams
+            if (p is FrameLayout.LayoutParams) {
+                if (p.topMargin != use) {
+                    p.topMargin = use
+                    v.layoutParams = p
+                }
+            }
+        }
+    }
+
+    private fun unshiftOfficial(content: ViewGroup, panel: View?) {
+        for (i in 0 until content.childCount) {
+            val v = content.getChildAt(i)
+            if (v === panel || v.tag == TAG_HUD || v.tag == TAG_LOAD) continue
+            val p = v.layoutParams
+            if (p is FrameLayout.LayoutParams && p.topMargin != 0) {
+                p.topMargin = 0
+                v.layoutParams = p
+            }
+        }
+    }
+
+    private fun dp(c: Context, v: Int): Int =
+        Math.round(v * c.resources.displayMetrics.density)
+
+    private fun hit(v: View, ev: MotionEvent): Boolean {
+        val loc = IntArray(2)
+        v.getLocationOnScreen(loc)
+        val x = ev.rawX
+        val y = ev.rawY
+        return x >= loc[0] && x < loc[0] + v.width && y >= loc[1] && y < loc[1] + v.height
+    }
+
+    private fun beginGameLoad(activity: Activity, name: String = "загрузка игры") {
+        if (playing || inGame(activity)) return
+        waitGame = true
+        tappedAt = android.os.SystemClock.elapsedRealtime()
+        BootLog.add("тап по обложке → наш индикатор")
+        try {
+            applyMode(activity)
+            LoadOverlay.show(activity, name)
+            hideOfficialLoader(activity)
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun onGameGrid(activity: Activity, ev: MotionEvent): Boolean {
+        if (onOurChrome(activity, ev)) return false
+        val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return false
+        val h = content.height
+        if (h <= 0) return false
+        val panel = content.findViewWithTag<View>(TAG)
+        val top = (panel?.height ?: 0) + dp(activity, 64)
+        val bot = h - dp(activity, 92)
+        return ev.y > top && ev.y < bot
+    }
+
+    private fun onOurChrome(activity: Activity, ev: MotionEvent): Boolean {
+        val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return false
+        listOf(TAG, TAG_HUD, TAG_LOAD, TAG_INJECT).forEach { tag ->
+            val v = content.findViewWithTag<View>(tag)
+            if (v != null && v.visibility == View.VISIBLE && hit(v, ev)) {
+                if (tag == TAG_HUD) {
+                    val hud = v as? PlayHud ?: return true
+                    return hud.hitsChrome(ev)
+                }
+                return true
+            }
         }
         return false
     }
 
-    private fun dp(c: Context, v: Int): Int = Math.round(v * c.resources.displayMetrics.density)
+    private class CoverHold(
+        private val host: Activity,
+        private val base: Window.Callback,
+    ) : Window.Callback by base {
+        private var sx = 0f
+        private var sy = 0f
+        private var hold = false
+        private var grid = false
+        private var moved = false
+        private var posted: Runnable? = null
+        private val slop = 28f * host.resources.displayMetrics.density
 
-    private class TimerBall(private val host: Activity) : FrameLayout(host) {
-        private val label: TextView
+        private fun cancel() {
+            posted?.let { main.removeCallbacks(it) }
+            posted = null
+        }
+
+        override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    cancel()
+                    hold = false
+                    moved = false
+                    grid = onGameGrid(host, ev)
+                    val content = host.findViewById<ViewGroup>(android.R.id.content)
+                    if (content != null && !inGame(host) && !onOurChrome(host, ev) && !launching(host, content)) {
+                        sx = ev.rawX
+                        sy = ev.rawY
+                        val run = Runnable {
+                            hold = true
+                            showGameCard(host)
+                        }
+                        posted = run
+                        main.postDelayed(run, 480)
+                    }
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = ev.rawX - sx
+                    val dy = ev.rawY - sy
+                    if (dx * dx + dy * dy > slop * slop) {
+                        moved = true
+                        cancel()
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    cancel()
+                    if (hold) {
+                        hold = false
+                        return true
+                    }
+                    val go = ev.actionMasked == MotionEvent.ACTION_UP && grid && !moved &&
+                        !inGame(host) && !playing
+                    val handled = base.dispatchTouchEvent(ev)
+                    if (go) beginGameLoad(host)
+                    return handled
+                }
+            }
+            return base.dispatchTouchEvent(ev)
+        }
+    }
+
+    private fun showGameCard(host: Activity) {
+        try {
+            val scroll = ScrollView(host)
+            val box = LinearLayout(host)
+            box.orientation = LinearLayout.VERTICAL
+            val pad = dp(host, 14)
+            box.setPadding(pad, pad, pad, pad)
+
+            val coverRow = HorizontalScrollView(host)
+            val cover = TextView(host)
+            cover.text = "  обложка  ·  удержите другую, чтобы сменить  ·  прокрутка →  "
+            cover.setTextColor(TEXT)
+            cover.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            cover.setPadding(dp(host, 18), dp(host, 28), dp(host, 18), dp(host, 28))
+            val cd = GradientDrawable()
+            cd.setColor(0xFF1C1C24.toInt())
+            cd.cornerRadius = dp(host, 14).toFloat()
+            cover.background = cd
+            cover.minWidth = dp(host, 280)
+            coverRow.addView(cover)
+            box.addView(coverRow)
+
+            val id = GameExtra.lastTitleId(host)
+            val sub = TextView(host)
+            sub.text = if (id.isNotEmpty()) "titleId $id" else "titleId неизвестен — покажу все папки"
+            sub.setTextColor(MUTED)
+            sub.setPadding(0, dp(host, 8), 0, dp(host, 8))
+            box.addView(sub)
+
+            box.addView(toggleRow(host, "оверлей FPS", SettingsBank.overlayOn(host)) { on ->
+                SettingsBank.setOverlay(host, on)
+            })
+            box.addView(toggleRow(host, "журнал запуска", SettingsBank.journalOn(host)) { on ->
+                SettingsBank.setJournal(host, on)
+            })
+
+            addSection(host, box, "пресеты")
+            SettingsBank.ensureCatalog(host)
+            for (name in SettingsBank.listNamed(host)) {
+                val n = name
+                box.addView(plainBtn(host, n) {
+                    val msg = GamePause.applyThen(host) { SettingsBank.applyNamed(host, n) }
+                    Toast.makeText(host, msg, Toast.LENGTH_SHORT).show()
+                })
+            }
+
+            addSection(host, box, "моды · сейвы · читы")
+            val extras = TextView(host)
+            extras.setTextColor(MUTED)
+            extras.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            extras.setTypeface(Typeface.MONOSPACE)
+            extras.text = GameExtra.report(host)
+            extras.setPadding(0, dp(host, 4), 0, dp(host, 8))
+            box.addView(extras)
+
+            scroll.addView(box)
+            AlertDialog.Builder(host)
+                .setTitle("карточка игры")
+                .setView(scroll)
+                .setPositiveButton("закрыть", null)
+                .show()
+        } catch (t: Throwable) {
+            android.util.Log.e("KenjiSpace", "card", t)
+        }
+    }
+
+    private fun addSection(host: Activity, box: LinearLayout, title: String) {
+        val t = TextView(host)
+        t.text = title
+        t.setTextColor(MINT)
+        t.setTypeface(Typeface.DEFAULT_BOLD)
+        t.setPadding(0, dp(host, 12), 0, dp(host, 4))
+        box.addView(t)
+    }
+
+    private fun toggleRow(host: Activity, label: String, on: Boolean, set: (Boolean) -> Unit): Button {
+        var state = on
+        val b = Button(host)
+        fun paint() {
+            b.text = if (state) "$label · вкл" else "$label · выкл"
+        }
+        paint()
+        b.isAllCaps = false
+        b.setOnClickListener {
+            state = !state
+            set(state)
+            paint()
+        }
+        return b
+    }
+
+    private fun plainBtn(host: Activity, label: String, click: () -> Unit): Button {
+        val b = Button(host)
+        b.text = label
+        b.isAllCaps = false
+        b.setOnClickListener { click() }
+        return b
+    }
+
+    class LoadBar(host: Activity) : FrameLayout(host) {
+        override fun onTouchEvent(event: MotionEvent): Boolean = true
+        override fun onInterceptTouchEvent(ev: MotionEvent): Boolean = true
+
+        private val titleView: TextView
+        private val meta: TextView
+        private val track: FrameLayout
+        private val fill: View
+        private val log: TextView
         private var running = false
+        private var shown = 0f
+        private var title = "загрузка игры"
         private var t0 = 0L
-        private var vx = 0f
-        private var vy = 0f
-        private var lastX = 0f
-        private var lastY = 0f
-        private var lastT = 0L
-        private var dragging = false
-        private val am = host.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         private val tick = object : Runnable {
             override fun run() {
                 if (!running) return
-                val sec = (SystemClock.elapsedRealtime() - t0) / 1000L
-                label.text = String.format("%d:%02d", sec / 60, sec % 60)
-                if (heardAudio() || sec > 180) {
-                    waitTimer = false
-                    dismiss()
-                    return
+                val (target, step) = BootLog.stage()
+                val goal = target.toFloat()
+                shown += (goal - shown) * 0.14f
+                if (shown < goal) shown += 0.22f
+                if (shown > goal + 5f) shown = goal + 5f
+                val tw = track.width
+                if (tw > 0) {
+                    val w = ((tw - dp(4)) * (shown / 100f)).toInt().coerceAtLeast(dp(12))
+                    val p = fill.layoutParams
+                    if (p.width != w) {
+                        p.width = w
+                        fill.layoutParams = p
+                    }
                 }
-                main.postDelayed(this, 200)
+                val sec = if (t0 == 0L) 0L else (android.os.SystemClock.elapsedRealtime() - t0) / 1000L
+                meta.text = String.format("%d:%02d   ·   %d%%   ·   %s", sec / 60, sec % 60, shown.toInt(), step)
+                val live = BootLog.lastKernel().ifBlank { BootLog.tail(1) }
+                val tail = BootLog.tail(3)
+                log.text = listOf(step, live, tail).filter { it.isNotBlank() }.distinct().joinToString("\n")
+                main.postDelayed(this, 80)
             }
         }
-        private val physics = object : Runnable {
-            override fun run() {
-                if (!running || dragging || parent == null) return
-                val p = parent as? ViewGroup ?: return
-                var x = x + vx
-                var y = y + vy
-                val maxX = (p.width - width).toFloat().coerceAtLeast(0f)
-                val maxY = (p.height - height).toFloat().coerceAtLeast(0f)
-                if (x <= 0f) {
-                    x = 0f
-                    vx = -vx * 0.72f
-                } else if (x >= maxX) {
-                    x = maxX
-                    vx = -vx * 0.72f
-                }
-                if (y <= 0f) {
-                    y = 0f
-                    vy = -vy * 0.72f
-                } else if (y >= maxY) {
-                    y = maxY
-                    vy = -vy * 0.72f
-                }
-                vx *= 0.985f
-                vy *= 0.985f
-                this@TimerBall.x = x
-                this@TimerBall.y = y
-                if (kotlin.math.abs(vx) + kotlin.math.abs(vy) > 0.4f) {
-                    main.postDelayed(this, 16)
-                }
-            }
-        }
-
-        init {
-            val d = GradientDrawable()
-            d.setColor(0xE616161C.toInt())
-            d.setStroke(dp(1), MINT)
-            d.cornerRadius = dp(20).toFloat()
-            background = d
-            setPadding(dp(14), dp(8), dp(14), dp(8))
-            label = TextView(host)
-            label.setTextColor(MINT)
-            label.setTypeface(Typeface.MONOSPACE)
-            label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            label.text = "0:00"
-            addView(label, LayoutParams(-2, -2, Gravity.CENTER))
-        }
-
-        fun showRunning() {
-            visibility = VISIBLE
-            if (!running) {
-                running = true
-                t0 = SystemClock.elapsedRealtime()
-                vx = 0f
-                vy = 0f
-                main.removeCallbacks(tick)
-                main.post(tick)
-            }
-        }
-
-        fun heardAudio(): Boolean {
-            if (SystemClock.elapsedRealtime() - t0 < 1600L) return false
-            return try {
-                if (am.isMusicActive) return true
-                val cfgs = am.activePlaybackConfigurations ?: return false
-                for (c in cfgs) {
-                    val u = c.audioAttributes.usage
-                    if (u == android.media.AudioAttributes.USAGE_GAME ||
-                        u == android.media.AudioAttributes.USAGE_MEDIA ||
-                        u == android.media.AudioAttributes.USAGE_UNKNOWN
-                    ) return true
-                }
-                false
-            } catch (_: Throwable) {
-                false
-            }
-        }
-
-        fun dismiss() {
-            running = false
-            main.removeCallbacks(tick)
-            main.removeCallbacks(physics)
-            visibility = GONE
-        }
-
-        override fun onTouchEvent(event: MotionEvent): Boolean {
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    dragging = true
-                    lastX = event.rawX
-                    lastY = event.rawY
-                    lastT = SystemClock.uptimeMillis()
-                    vx = 0f
-                    vy = 0f
-                    parent?.requestDisallowInterceptTouchEvent(true)
-                    return true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val nx = event.rawX
-                    val ny = event.rawY
-                    val now = SystemClock.uptimeMillis()
-                    val dt = (now - lastT).coerceAtLeast(1)
-                    vx = (nx - lastX) * 16f / dt
-                    vy = (ny - lastY) * 16f / dt
-                    x += nx - lastX
-                    y += ny - lastY
-                    lastX = nx
-                    lastY = ny
-                    lastT = now
-                    return true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    dragging = false
-                    main.removeCallbacks(physics)
-                    main.post(physics)
-                    return true
-                }
-            }
-            return false
-        }
-
-        private fun dp(v: Int): Int = Math.round(v * resources.displayMetrics.density)
-    }
-
-    private class PresetFab(private val host: Activity) : FrameLayout(host) {
-        private val sheet: ScrollView
-        private val box: LinearLayout
 
         init {
             isClickable = false
             isFocusable = false
-            val btn = TextView(host)
-            btn.text = "⚙"
-            btn.gravity = Gravity.CENTER
-            btn.setTextColor(Color.BLACK)
-            btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setBackgroundColor(0xF20A0A0E.toInt())
+            val box = LinearLayout(host)
+            box.orientation = LinearLayout.VERTICAL
+            box.gravity = Gravity.CENTER_HORIZONTAL
+            val pad = dp(28)
+            box.setPadding(pad, 0, pad, 0)
+
+            titleView = TextView(host)
+            titleView.setTextColor(TEXT)
+            titleView.setTypeface(Typeface.DEFAULT_BOLD)
+            titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+            titleView.gravity = Gravity.CENTER
+            titleView.text = "загрузка"
+            box.addView(titleView)
+
+            meta = TextView(host)
+            meta.setTextColor(MINT)
+            meta.setTypeface(Typeface.MONOSPACE)
+            meta.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            meta.gravity = Gravity.CENTER
+            meta.setPadding(0, dp(10), 0, dp(16))
+            meta.text = "0:00   ·   0%"
+            box.addView(meta)
+
+            track = FrameLayout(host)
+            val tg = GradientDrawable()
+            tg.setColor(0xFF2A2A32.toInt())
+            tg.cornerRadius = dp(6).toFloat()
+            track.background = tg
+            val tlp = LinearLayout.LayoutParams(dp(280), dp(8))
+            box.addView(track, tlp)
+            fill = View(host)
+            val fg = GradientDrawable()
+            fg.setColor(MINT)
+            fg.cornerRadius = dp(6).toFloat()
+            fill.background = fg
+            track.addView(fill, LayoutParams(dp(12), -1, Gravity.START or Gravity.CENTER_VERTICAL))
+
+            log = TextView(host)
+            log.setTextColor(0x88D0D0D8.toInt())
+            log.setTypeface(Typeface.MONOSPACE)
+            log.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            log.gravity = Gravity.CENTER
+            log.setPadding(0, dp(18), 0, 0)
+            box.addView(log)
+
+            addView(box, LayoutParams(-1, -2, Gravity.CENTER))
+        }
+
+        fun start(now: String) {
+            val clean = now.replace('\n', ' ')
+                .replace("Loading", "", ignoreCase = true)
+                .replace("Загрузка", "", ignoreCase = true)
+                .trim()
+                .ifBlank { "игра" }
+            title = clean.take(48)
+            titleView.text = title
+            if (running) return
+            running = true
+            t0 = android.os.SystemClock.elapsedRealtime()
+            shown = 6f
+            main.removeCallbacks(tick)
+            main.post(tick)
+        }
+
+        fun completeThenFade(done: () -> Unit) {
+            running = false
+            main.removeCallbacks(tick)
+            shown = 100f
+            val tw = track.width
+            if (tw > 0) {
+                fill.layoutParams.width = tw - dp(4)
+                fill.requestLayout()
+            }
+            meta.text = String.format("%d:%02d   ·   100%%   ·   готово",
+                if (t0 == 0L) 0 else ((android.os.SystemClock.elapsedRealtime() - t0) / 1000L) / 60,
+                if (t0 == 0L) 0 else ((android.os.SystemClock.elapsedRealtime() - t0) / 1000L) % 60)
+            var a = 1f
+            val fade = object : Runnable {
+                override fun run() {
+                    a -= 0.07f
+                    alpha = a.coerceAtLeast(0f)
+                    if (a > 0f) {
+                        main.postDelayed(this, 32)
+                    } else {
+                        stop()
+                        done()
+                    }
+                }
+            }
+            main.postDelayed(fade, 220)
+        }
+
+        fun stop() {
+            running = false
+            main.removeCallbacks(tick)
+            shown = 0f
+            t0 = 0L
+            log.text = ""
+            alpha = 1f
+        }
+
+        private fun dp(v: Int): Int =
+            Math.round(v * resources.displayMetrics.density)
+    }
+
+    private class Panel(private val host: Activity) : LinearLayout(host) {
+        private val summary: TextView
+        private val plus: TextView
+        private val body: LinearLayout
+        private val status: TextView
+        private val bridges: LinearLayout
+        private val presets: LinearLayout
+        private val journalBtn: Button
+        private val tabBridges: Button
+        private val tabPresets: Button
+        private var tab = 0
+        private var open = false
+
+        init {
+            orientation = VERTICAL
+            setBackgroundColor(BG)
+            val pad = dp(10)
+            setPadding(pad, dp(8), pad, dp(8))
+
+            val head = LinearLayout(host)
+            head.orientation = HORIZONTAL
+            head.gravity = Gravity.CENTER_VERTICAL
+            summary = TextView(host)
+            summary.setTextColor(TEXT)
+            summary.setTypeface(Typeface.DEFAULT_BOLD)
+            summary.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            summary.setPadding(0, dp(4), 0, dp(4))
+            summary.setOnClickListener { toggle() }
+            head.addView(summary, LayoutParams(0, -2, 1f))
+
+            plus = TextView(host)
+            plus.text = "+"
+            plus.gravity = Gravity.CENTER
+            plus.setTextColor(Color.BLACK)
+            plus.setTypeface(Typeface.DEFAULT_BOLD)
+            plus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+            val pd = GradientDrawable()
+            pd.setColor(MINT)
+            pd.cornerRadius = dp(16).toFloat()
+            plus.background = pd
+            val plp = LayoutParams(dp(32), dp(32))
+            plus.layoutParams = plp
+            plus.setOnClickListener { pick("games") }
+            head.addView(plus)
+            addView(head)
+
+            body = LinearLayout(host)
+            body.orientation = VERTICAL
+            body.visibility = GONE
+            addView(body)
+
+            status = TextView(host)
+            status.setTextColor(MUTED)
+            status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            status.setPadding(0, dp(4), 0, dp(6))
+            body.addView(status)
+
+            val tabs = LinearLayout(host)
+            tabs.orientation = HORIZONTAL
+            tabBridges = pill("Мосты", true) { show(0) }
+            tabPresets = pill("Пресеты", false) { show(1) }
+            tabs.addView(tabBridges, LayoutParams(0, -2, 1f).also { it.marginEnd = dp(6) })
+            tabs.addView(tabPresets, LayoutParams(0, -2, 1f))
+            body.addView(tabs)
+
+            bridges = LinearLayout(host)
+            bridges.orientation = VERTICAL
+            bridges.addView(rowBtn("Папка Eden/files (оригинал прошивки)") { pick("eden") })
+            bridges.addView(rowBtn("Папка игр (+)") { pick("games") })
+            journalBtn = rowBtn("Журнал запуска") { showJournal() }
+            journalBtn.visibility = GONE
+            bridges.addView(journalBtn)
+            bridges.addView(rowBtn("Починить всё", accent = true) { save() })
+            body.addView(bridges)
+
+            presets = LinearLayout(host)
+            presets.orientation = VERTICAL
+            presets.visibility = GONE
+            body.addView(presets)
+        }
+
+        fun collapse() {
+            if (!open) return
+            open = false
+            body.visibility = GONE
+            summary.text = summary.text.toString().replace("свернуть", "развернуть")
+        }
+
+        private fun toggle() {
+            open = !open
+            body.visibility = if (open) VISIBLE else GONE
+            if (open) refresh()
+            post {
+                val content = host.findViewById<ViewGroup>(android.R.id.content) ?: return@post
+                shiftOfficial(content, this)
+            }
+        }
+
+        fun refresh() {
+            val nca = DataSeed.firmwareNca(host)
+            val bytes = DataSeed.firmwareBytes(host)
+            val fw = if (nca >= 5) {
+                "$nca NCA · ${BootLog.human(bytes)}"
+            } else {
+                "нет прошивки ($nca NCA)"
+            }
+            summary.text = "Kenji Space  ·  $fw  ·  ${if (open) "свернуть" else "развернуть"}"
+            if (!open) return
+            journalBtn.visibility = if (SettingsBank.journalOn(host)) VISIBLE else GONE
+            val home = DataSeed.playHome(host)
+            val keysFile = File(home, "system/prod.keys")
+            val keys = if (keysFile.isFile && keysFile.length() > 100) {
+                "ключи ${BootLog.human(keysFile.length())}"
+            } else {
+                "нет ключей"
+            }
+            status.text = buildString {
+                append(keys).append(" · ").append(nca).append(" NCA · ").append(BootLog.human(bytes)).append('\n')
+                append(home.absolutePath).append('\n')
+                append("удержите обложку — карточка (моды, сейвы, читы)")
+            }
+            fillPresets()
+        }
+
+        private fun showJournal() {
+            val box = ScrollView(host)
+            val t = TextView(host)
+            t.setTextIsSelectable(true)
+            t.setTextColor(TEXT)
+            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            t.setTypeface(Typeface.MONOSPACE)
+            t.setPadding(dp(12), dp(12), dp(12), dp(12))
+            t.text = buildString {
+                append(BootLog.versionLine).append('\n')
+                append(BootLog.dump()).append('\n')
+                append(BootLog.kernelDump())
+            }
+            box.addView(t)
+            AlertDialog.Builder(host)
+                .setTitle("журнал запуска")
+                .setView(box)
+                .setPositiveButton("скрыть") { _, _ ->
+                    SettingsBank.setJournal(host, false)
+                    refresh()
+                }
+                .setNegativeButton("закрыть", null)
+                .show()
+        }
+
+        private fun show(which: Int) {
+            tab = which
+            bridges.visibility = if (which == 0) VISIBLE else GONE
+            presets.visibility = if (which == 1) VISIBLE else GONE
+            paintTab(tabBridges, which == 0)
+            paintTab(tabPresets, which == 1)
+        }
+
+        private fun save() {
+            status.text = "чиню…"
+            Thread({
+                try {
+                    AccessFix.repair(host)
+                    DataSeed.ensure(host)
+                    SettingsBank.saveNamed(host, "последние")
+                    host.runOnUiThread {
+                        refresh()
+                        Toast.makeText(host, "готово · ${DataSeed.firmwareNca(host)} NCA", Toast.LENGTH_LONG).show()
+                    }
+                } catch (t: Throwable) {
+                    host.runOnUiThread {
+                        Toast.makeText(host, "не сохранилось: ${t.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }, "kenji-fix").start()
+        }
+
+        private fun pick(kind: String) {
+            val i = Intent()
+            i.setClassName(host.packageName, "dev.symbiosis.kenji.PickActivity")
+            i.putExtra("kind", kind)
+            host.startActivity(i)
+        }
+
+        private fun fillPresets() {
+            presets.removeAllViews()
+            SettingsBank.ensureCatalog(host)
+            for (name in SettingsBank.listNamed(host)) {
+                val n = name
+                presets.addView(rowBtn(n) {
+                    Toast.makeText(host, SettingsBank.applyNamed(host, n), Toast.LENGTH_SHORT).show()
+                })
+            }
+        }
+
+        private fun rowBtn(label: String, accent: Boolean = false, click: () -> Unit): Button {
+            val b = pill(label, accent, click)
+            val lp = LayoutParams(-1, -2)
+            lp.topMargin = dp(6)
+            b.layoutParams = lp
+            return b
+        }
+
+        private fun pill(label: String, accent: Boolean, click: () -> Unit): Button {
+            val b = Button(host)
+            b.text = label
+            b.isAllCaps = false
+            paintTab(b, accent)
+            b.setOnClickListener { click() }
+            return b
+        }
+
+        private fun paintTab(b: Button, on: Boolean) {
+            b.setTextColor(if (on) Color.BLACK else TEXT)
+            val d = GradientDrawable()
+            d.setColor(if (on) MINT else CARD)
+            d.cornerRadius = dp(18).toFloat()
+            b.background = d
+        }
+
+        private fun dp(v: Int): Int =
+            Math.round(v * resources.displayMetrics.density)
+    }
+
+    private class PlayHud(private val host: Activity) : FrameLayout(host) {
+        private val stats: TextView
+        private val fab: TextView
+        private val bar: LinearLayout
+        private val sheet: ScrollView
+        private val sheetBox: LinearLayout
+        private val pauseBtn: TextView
+        private var frames = 0
+        private var lastNs = 0L
+        private var fps = 0.0
+        private var running = false
+        private var fabHidden = false
+        private lateinit var cb: Choreographer.FrameCallback
+
+        init {
+            isClickable = false
+            isFocusable = false
+            cb = Choreographer.FrameCallback { ns ->
+                if (!running) return@FrameCallback
+                frames++
+                if (lastNs == 0L) lastNs = ns
+                val dt = ns - lastNs
+                if (dt >= 400_000_000L) {
+                    fps = frames * 1_000_000_000.0 / dt
+                    frames = 0
+                    lastNs = ns
+                    paintStats()
+                }
+                Choreographer.getInstance().postFrameCallback(cb)
+            }
+
+            stats = TextView(host)
+            stats.setTextColor(RED)
+            stats.setTypeface(Typeface.MONOSPACE)
+            stats.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            stats.setShadowLayer(2.5f, 0f, 0f, Color.BLACK)
+            stats.text = "FPS --"
+            val slp = LayoutParams(-2, -2, Gravity.TOP or Gravity.START)
+            slp.topMargin = dp(8)
+            slp.marginStart = dp(8)
+            addView(stats, slp)
+
+            fab = TextView(host)
+            fab.text = "⚙"
+            fab.gravity = Gravity.CENTER
+            fab.setTextColor(Color.BLACK)
+            fab.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             val ball = GradientDrawable()
             ball.setColor(MINT)
             ball.cornerRadius = dp(22).toFloat()
-            btn.background = ball
-            addView(btn, LayoutParams(dp(44), dp(44), Gravity.CENTER_VERTICAL or Gravity.START))
-            btn.setOnClickListener { toggle() }
-            box = LinearLayout(host)
-            box.orientation = LinearLayout.VERTICAL
-            box.setPadding(dp(10), dp(10), dp(10), dp(10))
+            fab.background = ball
+            val flp = LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.START)
+            flp.marginStart = dp(14)
+            flp.bottomMargin = dp(96)
+            addView(fab, flp)
+            fab.setOnClickListener { toggleSheet() }
+            fab.setOnLongClickListener {
+                fabHidden = true
+                fab.visibility = GONE
+                Toast.makeText(host, "кнопка скрыта · удержите центр снизу, чтобы вернуть", Toast.LENGTH_SHORT).show()
+                true
+            }
+
+            bar = LinearLayout(host)
+            bar.orientation = LinearLayout.HORIZONTAL
+            bar.gravity = Gravity.CENTER
+            val glass = GradientDrawable()
+            glass.setColor(0xE616161C.toInt())
+            glass.cornerRadius = dp(22).toFloat()
+            glass.setStroke(dp(1), 0x66FFFFFF)
+            bar.background = glass
+            bar.setPadding(dp(10), dp(6), dp(10), dp(6))
+            pauseBtn = chip("❚❚") { togglePause() }
+            bar.addView(pauseBtn)
+            bar.addView(chip("◈") { toggleSheet() })
+            bar.addView(chip("•") {
+                val on = !SettingsBank.overlayOn(host)
+                SettingsBank.setOverlay(host, on)
+                stats.visibility = if (on) VISIBLE else GONE
+            })
+            val blp = LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            blp.bottomMargin = dp(86)
+            addView(bar, blp)
+            bar.setOnLongClickListener {
+                if (fabHidden) {
+                    fabHidden = false
+                    fab.visibility = VISIBLE
+                }
+                true
+            }
+
+            sheetBox = LinearLayout(host)
+            sheetBox.orientation = LinearLayout.VERTICAL
+            sheetBox.setPadding(dp(12), dp(12), dp(12), dp(12))
             sheet = ScrollView(host)
             sheet.setBackgroundColor(0xF214141A.toInt())
-            sheet.addView(box)
+            sheet.addView(sheetBox)
             sheet.visibility = GONE
-            val slp = LayoutParams(dp(220), dp(280), Gravity.CENTER_VERTICAL or Gravity.START)
-            slp.marginStart = dp(52)
-            addView(sheet, slp)
+            val shLp = LayoutParams(dp(260), dp(320), Gravity.BOTTOM or Gravity.START)
+            shLp.marginStart = dp(12)
+            shLp.bottomMargin = dp(150)
+            addView(sheet, shLp)
+        }
+
+        fun hitsChrome(ev: MotionEvent): Boolean {
+            if (fab.visibility == VISIBLE && hitView(fab, ev)) return true
+            if (bar.visibility == VISIBLE && hitView(bar, ev)) return true
+            if (sheet.visibility == VISIBLE && hitView(sheet, ev)) return true
+            return false
+        }
+
+        private fun hitView(v: View, ev: MotionEvent): Boolean {
+            val loc = IntArray(2)
+            v.getLocationOnScreen(loc)
+            val x = ev.rawX
+            val y = ev.rawY
+            return x >= loc[0] && x < loc[0] + v.width && y >= loc[1] && y < loc[1] + v.height
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean = false
         override fun onInterceptTouchEvent(ev: MotionEvent): Boolean = false
 
-        fun hideSheet() {
-            sheet.visibility = GONE
+        private fun chip(label: String, click: () -> Unit): TextView {
+            val t = TextView(host)
+            t.text = label
+            t.gravity = Gravity.CENTER
+            t.setTextColor(TEXT)
+            t.setPadding(dp(12), dp(6), dp(12), dp(6))
+            t.setOnClickListener { click() }
+            return t
         }
 
-        private fun toggle() {
+        private fun togglePause() {
+            val msg = GamePause.toggle(host)
+            pauseBtn.text = if (GamePause.paused) "▶" else "❚❚"
+            Toast.makeText(host, msg, Toast.LENGTH_SHORT).show()
+        }
+
+        private fun toggleSheet() {
             if (sheet.visibility == VISIBLE) {
                 sheet.visibility = GONE
-                return
+            } else {
+                fillSheet()
+                sheet.visibility = VISIBLE
             }
-            box.removeAllViews()
+        }
+
+        private fun fillSheet() {
+            sheetBox.removeAllViews()
             val t = TextView(host)
-            t.text = "пресеты"
+            t.text = if (GamePause.paused) "на паузе · смена пресета безопасна" else "пресеты · сначала пауза"
             t.setTextColor(MUTED)
-            box.addView(t)
+            sheetBox.addView(t)
             SettingsBank.ensureCatalog(host)
             for (name in SettingsBank.listNamed(host)) {
                 val n = name
@@ -427,13 +1288,56 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                 b.isAllCaps = false
                 b.setOnClickListener {
                     val msg = GamePause.applyThen(host) { SettingsBank.applyNamed(host, n) }
+                    pauseBtn.text = if (GamePause.paused) "▶" else "❚❚"
                     Toast.makeText(host, msg, Toast.LENGTH_SHORT).show()
                 }
-                box.addView(b)
+                sheetBox.addView(b)
             }
-            sheet.visibility = VISIBLE
+            val extra = TextView(host)
+            extra.setTextColor(MUTED)
+            extra.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            extra.setTypeface(Typeface.MONOSPACE)
+            extra.text = "\n" + GameExtra.report(host)
+            sheetBox.addView(extra)
         }
 
-        private fun dp(v: Int): Int = Math.round(v * resources.displayMetrics.density)
+        private fun paintStats() {
+            if (!SettingsBank.overlayOn(host)) {
+                stats.visibility = GONE
+                return
+            }
+            stats.visibility = VISIBLE
+            if (fps >= 1.0) LoadOverlay.onGameFps(host)
+            val cpu = CpuMeter.sample()
+            val speed = if (fps <= 0) 0 else (fps / 60.0 * 100.0)
+            val scale = SettingsBank.scaleOf(host)
+            val dock = if (SettingsBank.dockedOf(host)) "TV" else "HH"
+            val mem = Runtime.getRuntime()
+            val used = (mem.totalMemory() - mem.freeMemory()) / (1024 * 1024)
+            stats.text = String.format(
+                "CPU %d%%  FPS %.0f  %d%%  %.2f× %s  %d МБ%s",
+                cpu, fps, speed.toInt(), scale, dock, used,
+                if (GamePause.paused) "  PAUSE" else "",
+            )
+        }
+
+        fun start() {
+            playing = true
+            waitGame = false
+            if (running) return
+            running = true
+            frames = 0
+            lastNs = 0L
+            fab.visibility = if (fabHidden) GONE else VISIBLE
+            paintStats()
+            Choreographer.getInstance().postFrameCallback(cb)
+        }
+
+        fun stop() {
+            running = false
+        }
+
+        private fun dp(v: Int): Int =
+            Math.round(v * resources.displayMetrics.density)
     }
 }

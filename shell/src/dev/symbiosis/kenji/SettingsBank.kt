@@ -30,7 +30,12 @@ object SettingsBank {
     fun nceOf(c: Context): Boolean = SafePrefs.bool(official(c), "useNce", false)
 
     fun enableFps(c: Context) {
-        // Official Kenji already draws FPS (the 60 button). Do not fight it.
+        // Official HUD stays off — we draw a small red overlay instead.
+        val p = official(c)
+        listOf(
+            "showFps", "enableFps", "enableFpsCounter", "showFpsCounter",
+            "enableStatistics", "showHud", "enableHud", "enableOverlay",
+        ).forEach { SafePrefs.putBool(p, it, false) }
     }
 
     fun applyDefaultOnce(c: Context) {
