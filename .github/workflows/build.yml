@@ -141,7 +141,7 @@ jobs:
           for i in 1 2 3 4 5; do
             if gh release create latest Kenji-Space.apk \
               --title "Kenji Space ${KENJI_VERSION_NAME}" \
-              --notes "Белый экран: сканер больше не блокирует старт, Compose не пересаживаем. ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
+              --notes "Ярлык на всю Eden/files/bis (234 NCA). Заглушки 00 снесены. Панель сворачивается — видна сетка игр. ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
             then
               exit 0
             fi

@@ -67,8 +67,14 @@ object AccessFix {
         val current = prefs.getString("gameFolder", "")
         if (!current.isNullOrBlank()) return
         val sd = Environment.getExternalStorageDirectory()
+        val persisted = context.contentResolver.persistedUriPermissions.firstOrNull()
+        if (persisted != null) {
+            prefs.edit().putString("gameFolder", persisted.uri.toString()).commit()
+            return
+        }
         val candidates = listOf(
-            "Switch", "Games", "NSP", "Download/Switch", "Download/Games", "Download",
+            "Download/ed", "Download/ed/Eden", "Switch", "Games", "NSP",
+            "Download/Switch", "Download/Games", "Download",
         )
         for (rel in candidates) {
             val dir = File(sd, rel)

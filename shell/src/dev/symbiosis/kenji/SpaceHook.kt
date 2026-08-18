@@ -88,12 +88,15 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     private class Panel(private val host: Activity) : LinearLayout(host) {
+        private val summary: TextView
+        private val body: LinearLayout
         private val status: TextView
         private val bridges: LinearLayout
         private val presets: LinearLayout
         private val tabBridges: Button
         private val tabPresets: Button
         private var tab = 0
+        private var open = false
 
         init {
             orientation = VERTICAL
@@ -101,18 +104,24 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             val pad = dp(10)
             setPadding(pad, dp(8), pad, dp(8))
 
-            val title = TextView(host)
-            title.text = "Kenji Space"
-            title.setTextColor(TEXT)
-            title.setTypeface(Typeface.DEFAULT_BOLD)
-            title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            addView(title)
+            summary = TextView(host)
+            summary.setTextColor(TEXT)
+            summary.setTypeface(Typeface.DEFAULT_BOLD)
+            summary.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            summary.setPadding(0, dp(4), 0, dp(4))
+            summary.setOnClickListener { toggle() }
+            addView(summary)
+
+            body = LinearLayout(host)
+            body.orientation = VERTICAL
+            body.visibility = GONE
+            addView(body)
 
             status = TextView(host)
             status.setTextColor(MUTED)
             status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             status.setPadding(0, dp(4), 0, dp(6))
-            addView(status)
+            body.addView(status)
 
             val tabs = LinearLayout(host)
             tabs.orientation = HORIZONTAL
@@ -120,18 +129,23 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             tabPresets = pill("Пресеты", false) { show(1) }
             tabs.addView(tabBridges, LayoutParams(0, -2, 1f).also { it.marginEnd = dp(6) })
             tabs.addView(tabPresets, LayoutParams(0, -2, 1f))
-            addView(tabs)
+            body.addView(tabs)
 
             bridges = LinearLayout(host)
             bridges.orientation = VERTICAL
             bridges.addView(rowBtn("Папка Eden/files (оригинал прошивки)") { pick("eden") })
             bridges.addView(rowBtn("Починить всё", accent = true) { save() })
-            addView(bridges)
+            body.addView(bridges)
 
             presets = LinearLayout(host)
             presets.orientation = VERTICAL
             presets.visibility = GONE
-            addView(presets)
+            body.addView(presets)
+        }
+
+        private fun toggle() {
+            open = !open
+            body.visibility = if (open) VISIBLE else GONE
         }
 
         fun refresh() {
@@ -139,11 +153,12 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             val keysFile = java.io.File(play, "system/prod.keys")
             val keys = if (keysFile.isFile && keysFile.length() > 100) "ключи ${keysFile.length() / 1024} КБ" else "нет ключей"
             val nca = DataSeed.firmwareNca(host)
-            val fw = if (nca >= 5) "$nca NCA · ${DataSeed.firmwareMode(host)}" else "нет прошивки ($nca NCA в bis)"
+            val fw = if (nca >= 5) "$nca NCA · ${DataSeed.firmwareMode(host)}" else "нет прошивки ($nca NCA)"
+            summary.text = "Kenji Space  ·  $fw  ·  ${if (open) "свернуть" else "развернуть"}"
             val src = DataSeed.firmwareSource(host).ifEmpty { "источник не выбран" }
             val acc = AccessFix.statusLine(host)
             val hunt = FirmwareHunt.lastReport
-            status.text = "$keys · $fw\nпрошивка на месте: $src\nярлыки: ${play.absolutePath}/bis\n$acc\n— сканер —\n$hunt"
+            status.text = "$keys\nпрошивка: $src\n$acc\n— сканер —\n$hunt"
             fillPresets()
         }
 
@@ -156,16 +171,22 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
 
         private fun save() {
-            try {
-                AccessFix.repair(host)
-                if (!AccessFix.hasAllFiles()) AccessFix.askAllFiles(host)
-                DataSeed.ensure(host)
-                SettingsBank.saveNamed(host, "последние")
-                refresh()
-                Toast.makeText(host, status.text, Toast.LENGTH_LONG).show()
-            } catch (t: Throwable) {
-                Toast.makeText(host, "не сохранилось: ${t.message}", Toast.LENGTH_LONG).show()
-            }
+            status.text = "чиню…"
+            Thread({
+                try {
+                    AccessFix.repair(host)
+                    DataSeed.ensure(host)
+                    SettingsBank.saveNamed(host, "последние")
+                    host.runOnUiThread {
+                        refresh()
+                        Toast.makeText(host, "готово · ${DataSeed.firmwareNca(host)} NCA", Toast.LENGTH_LONG).show()
+                    }
+                } catch (t: Throwable) {
+                    host.runOnUiThread {
+                        Toast.makeText(host, "не сохранилось: ${t.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }, "kenji-fix").start()
         }
 
         private fun pick(kind: String) {

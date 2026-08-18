@@ -67,7 +67,6 @@ object DataSeed {
     private fun ensureInner(context: Context) {
         val dest = playHome(context)
         repairAppPath(context)
-        PathFix.repairTree(dest)
         AccessFix.repair(context)
         autoDiscoverEden(context)
         val destKeys = File(dest, "system/prod.keys")
@@ -78,33 +77,83 @@ object DataSeed {
         }
         harvestLooseKeys(destKeys)
 
-        val destReg = File(dest, "bis/system/Contents/registered")
-        destReg.mkdirs()
-        // Always (re)link to the original dump. Never copy. Replace old copies
-        // with shortcuts so one firmware stays where it already lives.
-        val origin = findOrigin(context, destReg)
-        if (origin != null) {
-            val ok = bridgeFirmware(context, origin, destReg)
+        FirmwareHunt.best(context)
+        val playBis = File(dest, "bis")
+        val destReg = File(playBis, "system/Contents/registered")
+        val kenjiHit = FirmwareHunt.lastHits.firstOrNull { it.kenjiLayout && it.nca >= 5 }
+        val anyHit = FirmwareHunt.lastHits.firstOrNull { it.nca >= 5 }
+        var ok = false
+        if (kenjiHit != null) {
+            val srcBis = bisRootOf(kenjiHit.dir)
+            ok = bindDir(srcBis, playBis)
+            if (ok) remember(context, srcBis.absolutePath, "ярлык на всю bis/", firmwareNca(context))
+        }
+        if (!ok && anyHit != null && !samePath(anyHit.dir, destReg)) {
+            wipeEmptyBis(playBis)
+            destReg.mkdirs()
+            ok = bridgeFirmware(context, anyHit.dir, destReg)
             if (!ok) {
                 remember(
                     context,
-                    origin.absolutePath,
-                    "нашёл ${FirmwareHunt.countNca(origin)} NCA, ярлыки не встали",
+                    anyHit.dir.absolutePath,
+                    "нашёл ${anyHit.nca} NCA, ярлыки не встали",
                     countKenji(destReg),
                 )
             }
-        } else if (countKenji(destReg) >= 5) {
+        } else if (!ok && countKenji(destReg) >= 5) {
             remember(context, destReg.absolutePath, modeOf(destReg), countKenji(destReg))
         }
         writePointer(context, dest)
         writeReport(context, dest)
     }
 
-    /** Best dump that is NOT playHome registered — firmware stays there. */
-    private fun findOrigin(context: Context, destReg: File): File? {
-        val hit = FirmwareHunt.best(context) ?: return null
-        if (samePath(hit.dir, destReg)) return null
-        return hit.dir
+    private fun bisRootOf(dir: File): File {
+        var p: File? = dir
+        repeat(6) {
+            val cur = p ?: return dir
+            if (cur.name == "bis" && File(cur, "system/Contents/registered").isDirectory) return cur
+            if (File(cur, "system/Contents/registered").let { countKenji(it) >= 5 }) return cur
+            p = cur.parentFile
+        }
+        return dir
+    }
+
+    private fun wipeEmptyBis(bis: File) {
+        val registered = File(bis, "system/Contents/registered")
+        if (isShortcut(bis)) {
+            if (countKenji(registered) < 5) bis.delete()
+            return
+        }
+        if (!bis.exists()) return
+        if (countKenji(registered) >= 5) return
+        registered.listFiles()?.forEach { d ->
+            val inner = File(d, "00")
+            if (!isReadableNca(inner)) d.deleteRecursively()
+        }
+        if (countKenji(registered) < 5) bis.deleteRecursively()
+    }
+
+    private fun bindDir(src: File, dest: File): Boolean {
+        if (!src.isDirectory) return false
+        if (samePath(src, dest)) return countKenji(File(dest, "system/Contents/registered")) >= 5
+        if (isShortcut(dest)) {
+            val target = readLink(dest)
+            if (target == src.absolutePath && countKenji(File(dest, "system/Contents/registered")) >= 5) return true
+            dest.delete()
+        } else {
+            wipeEmptyBis(dest)
+        }
+        if (dest.exists()) return false
+        dest.parentFile?.mkdirs()
+        return try {
+            Os.symlink(src.absolutePath, dest.absolutePath)
+            val n = countKenji(File(dest, "system/Contents/registered"))
+            Log.i("KenjiSpace", "bindDir $n ← ${src.absolutePath}")
+            n >= 5
+        } catch (t: Throwable) {
+            Log.e("KenjiSpace", "bindDir ${t.message}", t)
+            false
+        }
     }
 
     private fun autoDiscoverEden(context: Context) {
@@ -168,10 +217,9 @@ object DataSeed {
         val app = playHome(context)
         val bis = File(app, "bis")
         val registered = File(bis, "system/Contents/registered")
-        if (isShortcut(bis) && countKenji(registered) < 10) {
+        if (isShortcut(bis) && countKenji(registered) < 5) {
             Log.w("KenjiSpace", "drop empty bis symlink → ${readLink(bis)}")
             bis.delete()
-            File(app, "bis/system/Contents/registered").mkdirs()
         }
         val system = File(app, "system")
         val keys = File(system, "prod.keys")
@@ -314,8 +362,9 @@ object DataSeed {
             val destDir = File(destReg, name)
             val dest = File(destDir, "00")
             if (isReadableNca(dest) && isShortcut(dest)) continue
-            // Old full copy of the same dump — swap for a shortcut, free the bytes.
-            if (dest.exists()) dest.delete()
+            if (dest.exists()) {
+                if (dest.isDirectory) dest.deleteRecursively() else dest.delete()
+            }
             destDir.mkdirs()
             val how = shortcut(payload, dest) ?: continue
             if (how == "hardlink") mode = "жёсткие ссылки"
