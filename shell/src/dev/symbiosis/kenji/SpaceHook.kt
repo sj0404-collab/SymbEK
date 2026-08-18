@@ -109,13 +109,15 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             return false
         }
         if (waitGame) {
-            // Library stays under the official Compose dialog — never drop
-            // waitGame just because Search / our panel are still in the tree.
             val age = android.os.SystemClock.elapsedRealtime() - tappedAt
-            if (age > 120_000L && !officialGameDialog() && looksLikeLibrary(content)) {
+            if (age > 120_000L && activity.hasWindowFocus() && looksLikeLibrary(content)) {
                 waitGame = false
                 return false
             }
+            return true
+        }
+        if (!activity.hasWindowFocus()) {
+            waitGame = true
             return true
         }
         val title = scrapeLoadingTitle()
@@ -463,8 +465,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             waitGame = false
             panel?.collapse()
             panel?.visibility = View.GONE
+            (load as? LoadBar)?.stop()
             load?.visibility = View.GONE
-            stripInjected()
             hud?.visibility = View.VISIBLE
             hud?.start()
             unshiftOfficial(content, panel)
@@ -475,9 +477,10 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             panel?.visibility = View.GONE
             hud?.visibility = View.GONE
             hud?.stop()
-            load?.visibility = View.GONE
-            LoadOverlay.show(activity, scrapeLoadingTitle() ?: loadingTitle(content) ?: "загрузка игры")
-            hideOfficialLoader(activity)
+            val title = scrapeLoadingTitle() ?: loadingTitle(content) ?: "загрузка игры"
+            load?.visibility = View.VISIBLE
+            (load as? LoadBar)?.start(title)
+            LoadOverlay.buryKenji(activity)
             unshiftOfficial(content, panel)
         } else {
             panel?.visibility = View.VISIBLE
@@ -485,8 +488,6 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud?.stop()
             (load as? LoadBar)?.stop()
             load?.visibility = View.GONE
-            LoadOverlay.hide(activity)
-            stripInjected()
             if (panel != null) panel.post { shiftOfficial(content, panel) }
         }
     }
