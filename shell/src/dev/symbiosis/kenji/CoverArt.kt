@@ -98,8 +98,16 @@ object CoverArt {
         if (!path.startsWith("/")) return null
         val rom = File(path)
         if (!rom.isFile || !rom.name.lowercase(Locale.US).endsWith(".nsp")) return null
-        val keysFile = File(DataSeed.playHome(context), "system/prod.keys")
-        val map = readKeys(keysFile)
+        val map = HashMap<String, ByteArray>()
+        val keyFiles = ArrayList<File>()
+        keyFiles.add(File(DataSeed.playHome(context), "system/prod.keys"))
+        keyFiles.add(File(DataSeed.playHome(context), "keys/prod.keys"))
+        DataSeed.edenDir(context)?.let {
+            keyFiles.add(File(it, "system/prod.keys"))
+            keyFiles.add(File(it, "keys/prod.keys"))
+        }
+        keyFiles.add(File(android.os.Environment.getExternalStorageDirectory(), "prod.keys"))
+        for (kf in keyFiles) map.putAll(readKeys(kf))
         val headerKey = map["header_key"] ?: return null
         if (headerKey.size != 32) return null
         var raf: RandomAccessFile? = null

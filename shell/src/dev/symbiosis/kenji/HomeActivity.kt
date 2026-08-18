@@ -6,13 +6,16 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
-import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -20,9 +23,9 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import java.io.File
 
-/** Native Symbiosis-style home. Official Kenji MainActivity is only the player. */
 class HomeActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private val games = ArrayList<GameRom>()
@@ -32,29 +35,20 @@ class HomeActivity : Activity() {
     private var query = ""
     private lateinit var root: LinearLayout
     private lateinit var body: FrameLayout
-    private lateinit var tabLaunch: TextView
-    private lateinit var tabList: TextView
+    private val tabs = ArrayList<TextView>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = BG
         window.navigationBarColor = BG
+        askAllFiles()
         root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         root.setBackgroundColor(BG)
         val pad = dp(14)
         root.setPadding(pad, dp(10), pad, dp(10))
         root.addView(header())
-        val tabs = LinearLayout(this)
-        tabs.orientation = LinearLayout.HORIZONTAL
-        tabLaunch = chip("Лаунчер", true) { show(0) }
-        tabList = chip("Список", false) { show(1) }
-        tabs.addView(tabLaunch, LinearLayout.LayoutParams(0, -2, 1f).also { it.marginEnd = dp(8) })
-        tabs.addView(tabList, LinearLayout.LayoutParams(0, -2, 1f))
-        val tlp = LinearLayout.LayoutParams(-1, -2)
-        tlp.topMargin = dp(10)
-        tlp.bottomMargin = dp(8)
-        root.addView(tabs, tlp)
+        root.addView(tabRow())
         body = FrameLayout(this)
         root.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
@@ -65,13 +59,27 @@ class HomeActivity : Activity() {
                 SettingsBank.applyDefaultOnce(this)
             } catch (_: Throwable) {
             }
-            reload()
+            reload(true)
         }, "home-seed").start()
     }
 
     override fun onResume() {
         super.onResume()
-        reload()
+        reload(false)
+    }
+
+    private fun askAllFiles() {
+        if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
+            try {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.parse("package:$packageName"),
+                    ),
+                )
+            } catch (_: Exception) {
+            }
+        }
     }
 
     private fun header(): View {
@@ -92,14 +100,31 @@ class HomeActivity : Activity() {
         return row
     }
 
+    private fun tabRow(): View {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        val names = arrayOf("Лаунчер", "Список", "Настройки")
+        names.forEachIndexed { i, n ->
+            val t = chip(n, i == 0) { show(i) }
+            tabs.add(t)
+            row.addView(t, LinearLayout.LayoutParams(0, -2, 1f).also {
+                if (i < names.lastIndex) it.marginEnd = dp(6)
+            })
+        }
+        val lp = LinearLayout.LayoutParams(-1, -2)
+        lp.topMargin = dp(10)
+        lp.bottomMargin = dp(8)
+        row.layoutParams = lp
+        return row
+    }
+
     private fun show(which: Int) {
         tab = which
-        paintChip(tabLaunch, which == 0)
-        paintChip(tabList, which == 1)
+        tabs.forEachIndexed { i, v -> paintChip(v, i == which) }
         paint()
     }
 
-    private fun reload() {
+    private fun reload(coversToo: Boolean) {
         val list = try {
             GameShelf.list(this)
         } catch (_: Throwable) {
@@ -111,6 +136,7 @@ class HomeActivity : Activity() {
             if (index >= games.size) index = 0
             paint()
         }
+        if (!coversToo) return
         Thread({
             for (g in list) {
                 if (covers.containsKey(g.path)) continue
@@ -120,22 +146,27 @@ class HomeActivity : Activity() {
                     null
                 }
                 covers[g.path] = bmp
-                main.post { paint() }
+                main.post { if (tab != 2) paint() }
             }
         }, "covers").start()
     }
 
     private fun filtered(): List<GameRom> {
         val q = query.trim().lowercase()
-        return games.filter { g ->
-            q.isEmpty() || g.title.lowercase().contains(q) || g.titleId.lowercase().contains(q)
+        return games.filter {
+            q.isEmpty() || it.title.lowercase().contains(q) || it.titleId.lowercase().contains(q) ||
+                it.fileName.lowercase().contains(q)
         }
     }
 
     private fun paint() {
         body.removeAllViews()
-        if (tab == 0) body.addView(launcherPage(), FrameLayout.LayoutParams(-1, -1))
-        else body.addView(listPage(), FrameLayout.LayoutParams(-1, -1))
+        val page = when (tab) {
+            1 -> listPage()
+            2 -> settingsPage()
+            else -> launcherPage()
+        }
+        body.addView(page, FrameLayout.LayoutParams(-1, -1))
     }
 
     private fun launcherPage(): View {
@@ -144,7 +175,7 @@ class HomeActivity : Activity() {
         box.orientation = LinearLayout.VERTICAL
         box.gravity = Gravity.CENTER_HORIZONTAL
         val list = filtered()
-        val rom = list.getOrNull(index.coerceIn(0, (list.size - 1).coerceAtLeast(0)))
+        val rom = list.getOrNull(if (list.isEmpty()) 0 else index.coerceIn(0, list.size - 1))
         box.addView(coverRow(list, rom))
         val card = LinearLayout(this)
         card.orientation = LinearLayout.VERTICAL
@@ -152,11 +183,10 @@ class HomeActivity : Activity() {
         card.setPadding(dp(16), dp(16), dp(16), dp(16))
         val clp = LinearLayout.LayoutParams(-1, -2)
         clp.topMargin = dp(18)
-        if (rom == null || !rom.exists) {
+        if (rom == null) {
             val empty = TextView(this)
-            empty.text = "нет файла игры с обложкой"
+            empty.text = "игр нет. Откройте Список → «+ Папка» и укажите каталог с NSP/XCI. Папку можно сменить в Настройках — список пересоберётся."
             empty.setTextColor(MUTED)
-            empty.gravity = Gravity.CENTER
             card.addView(empty)
             box.addView(card, clp)
             scroll.addView(box)
@@ -169,13 +199,39 @@ class HomeActivity : Activity() {
         name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
         card.addView(name)
         val sub = TextView(this)
-        sub.text = listOf(rom.titleId.ifBlank { "titleId ?" }, BootLog.human(rom.bytes), rom.folder)
-            .joinToString(" · ")
+        sub.text = listOf(
+            rom.titleId.ifBlank { "titleId ?" },
+            BootLog.human(rom.bytes),
+            File(rom.path).parent ?: rom.folder,
+        ).joinToString(" · ")
         sub.setTextColor(MUTED)
         sub.setPadding(0, dp(4), 0, dp(12))
         card.addView(sub)
-        val coverOk = covers[rom.path] != null
-        val ready = rom.exists && coverOk && DataSeed.keysOk(this) && DataSeed.firmwareNca(this) >= 5
+        val ready = rom.exists && DataSeed.keysOk(this) && DataSeed.firmwareNca(this) >= 5
+        card.addView(startBtn(rom, ready))
+        card.addView(statsGrid(rom), LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(12) })
+        val mods = TextView(this)
+        mods.setTextColor(MUTED)
+        mods.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        mods.setPadding(0, dp(10), 0, 0)
+        mods.text = GameMeta.modsLine(this, rom)
+        card.addView(mods)
+        box.addView(card, clp)
+        val foot = LinearLayout(this)
+        foot.orientation = LinearLayout.HORIZONTAL
+        val ver = try {
+            packageManager.getPackageInfo(packageName, 0).versionName
+        } catch (_: Exception) {
+            "?"
+        }
+        foot.addView(mini("Ядро: Kenji-NX 2.1.0-pr.2"), LinearLayout.LayoutParams(0, -2, 1f).also { it.marginEnd = dp(8) })
+        foot.addView(mini("Space $ver"), LinearLayout.LayoutParams(0, -2, 1f))
+        box.addView(foot, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(10) })
+        scroll.addView(box)
+        return scroll
+    }
+
+    private fun startBtn(rom: GameRom, ready: Boolean): TextView {
         val go = TextView(this)
         go.gravity = Gravity.CENTER
         go.setTypeface(Typeface.DEFAULT_BOLD)
@@ -191,35 +247,15 @@ class HomeActivity : Activity() {
         } else {
             go.text = when {
                 !rom.exists -> "нет файла"
-                !coverOk -> "нет обложки"
-                !DataSeed.keysOk(this) -> "нет ключей"
-                else -> "нет прошивки"
+                !DataSeed.keysOk(this) -> "нет ключей — Настройки"
+                else -> "нет прошивки — Настройки"
             }
             go.setTextColor(MUTED)
             gd.setColor(0xFF2A2A32.toInt())
+            go.setOnClickListener { show(2) }
         }
         go.background = gd
-        card.addView(go, LinearLayout.LayoutParams(-1, -2))
-        card.addView(statsGrid(rom), LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(12) })
-        val mods = TextView(this)
-        mods.setTextColor(MUTED)
-        mods.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        mods.setPadding(0, dp(10), 0, 0)
-        val mid = if (rom.titleId.isNotEmpty()) GameExtra.report(this) else ""
-        mods.text = if (mid.contains(rom.titleId) && rom.titleId.isNotEmpty())
-            "моды / читы\nмод · ${rom.titleId}"
-        else "моды / читы\nнет"
-        card.addView(mods)
-        box.addView(card, clp)
-        val foot = LinearLayout(this)
-        foot.orientation = LinearLayout.HORIZONTAL
-        foot.addView(mini("Ядро: Symbiosis"), LinearLayout.LayoutParams(0, -2, 1f).also { it.marginEnd = dp(8) })
-        foot.addView(mini("CPU: host"), LinearLayout.LayoutParams(0, -2, 1f))
-        val flp = LinearLayout.LayoutParams(-1, -2)
-        flp.topMargin = dp(10)
-        box.addView(foot, flp)
-        scroll.addView(box)
-        return scroll
+        return go
     }
 
     private fun coverRow(list: List<GameRom>, rom: GameRom?): View {
@@ -232,7 +268,6 @@ class HomeActivity : Activity() {
                 paint()
             }
         })
-        val frame = FrameLayout(this)
         val img = ImageView(this)
         img.scaleType = ImageView.ScaleType.CENTER_CROP
         val d = GradientDrawable()
@@ -242,21 +277,20 @@ class HomeActivity : Activity() {
         img.clipToOutline = true
         val bmp = rom?.let { covers[it.path] }
         if (bmp != null) img.setImageBitmap(bmp)
+        else {
+            img.scaleType = ImageView.ScaleType.CENTER
+        }
         val size = dp(196)
-        frame.addView(img, FrameLayout.LayoutParams(size, size, Gravity.CENTER))
         val flp = LinearLayout.LayoutParams(size, size)
         flp.marginStart = dp(10)
         flp.marginEnd = dp(10)
-        row.addView(frame, flp)
+        row.addView(img, flp)
         row.addView(roundBtn("›") {
             if (list.isNotEmpty()) {
                 index = (index + 1) % list.size
                 paint()
             }
         })
-        val wrap = LinearLayout.LayoutParams(-1, -2)
-        wrap.topMargin = dp(12)
-        row.layoutParams = wrap
         return row
     }
 
@@ -265,18 +299,16 @@ class HomeActivity : Activity() {
         grid.orientation = LinearLayout.VERTICAL
         val r1 = LinearLayout(this)
         r1.orientation = LinearLayout.HORIZONTAL
-        r1.addView(stat("время", playLabel(rom)), LinearLayout.LayoutParams(0, -2, 1f).also { it.marginEnd = dp(6) })
+        r1.addView(stat("запуски", launches(rom)), LinearLayout.LayoutParams(0, -2, 1f).also { it.marginEnd = dp(6) })
         r1.addView(stat("запуск", launchLabel(rom)), LinearLayout.LayoutParams(0, -2, 1f).also { it.marginEnd = dp(6) })
-        r1.addView(stat("прохождение", saveLabel(rom)), LinearLayout.LayoutParams(0, -2, 1f))
+        r1.addView(stat("прохождение", if (GameMeta.saveBytes(this, rom) > 0) "есть сейв" else "нет"), LinearLayout.LayoutParams(0, -2, 1f))
         grid.addView(r1)
         val r2 = LinearLayout(this)
         r2.orientation = LinearLayout.HORIZONTAL
-        r2.addView(stat("сейв", saveSize(rom)), LinearLayout.LayoutParams(0, -2, 1f).also { it.marginEnd = dp(6) })
-        r2.addView(stat("фото", photos(rom).toString()), LinearLayout.LayoutParams(0, -2, 1f).also { it.marginEnd = dp(6) })
-        r2.addView(stat("шейдеры", shaders(rom)), LinearLayout.LayoutParams(0, -2, 1f))
-        val r2lp = LinearLayout.LayoutParams(-1, -2)
-        r2lp.topMargin = dp(6)
-        grid.addView(r2, r2lp)
+        r2.addView(stat("сейв", humanOrDash(GameMeta.saveBytes(this, rom))), LinearLayout.LayoutParams(0, -2, 1f).also { it.marginEnd = dp(6) })
+        r2.addView(stat("фото", GameMeta.photos(this, rom).toString()), LinearLayout.LayoutParams(0, -2, 1f).also { it.marginEnd = dp(6) })
+        r2.addView(stat("шейдеры", humanOrDash(GameMeta.shaderBytes(this, rom))), LinearLayout.LayoutParams(0, -2, 1f))
+        grid.addView(r2, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
         return grid
     }
 
@@ -287,7 +319,6 @@ class HomeActivity : Activity() {
         search.hint = "Найти игру…"
         search.setHintTextColor(MUTED)
         search.setTextColor(TEXT)
-        search.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
         search.setSingleLine()
         search.setText(query)
         search.background = cardBg()
@@ -297,7 +328,7 @@ class HomeActivity : Activity() {
             paint()
             true
         }
-        wrap.addView(search, LinearLayout.LayoutParams(-1, -2))
+        wrap.addView(search)
         wrap.addView(statusCard(), LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(10) })
         val scroll = ScrollView(this)
         val box = LinearLayout(this)
@@ -305,38 +336,68 @@ class HomeActivity : Activity() {
         val list = filtered()
         if (list.isEmpty()) {
             val empty = TextView(this)
-            empty.text = "игр нет. Нажмите «+ Папка» и укажите каталог с NSP/XCI."
+            empty.text = "игр нет. Нажмите «+ Папка» — сработает любая директория с NSP/XCI."
             empty.setTextColor(MUTED)
             empty.setPadding(0, dp(16), 0, 0)
             box.addView(empty)
         }
-        for ((i, g) in list.withIndex()) {
+        list.forEachIndexed { i, g ->
             box.addView(gameRow(g, i), LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(8) })
         }
         scroll.addView(box)
         wrap.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f).also { it.topMargin = dp(8) })
         val bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
-        bar.gravity = Gravity.END
-        val plus = TextView(this)
-        plus.text = "+ Папка"
-        plus.gravity = Gravity.CENTER
-        plus.setTextColor(Color.WHITE)
-        plus.setTypeface(Typeface.DEFAULT_BOLD)
-        plus.setPadding(dp(18), dp(12), dp(18), dp(12))
-        val pd = GradientDrawable()
-        pd.setColor(PINK)
-        pd.cornerRadius = dp(22).toFloat()
-        plus.background = pd
-        plus.setOnClickListener {
-            val i = Intent()
-            i.setClassName(packageName, "dev.symbiosis.kenji.PickActivity")
-            i.putExtra("kind", "games")
-            startActivity(i)
-        }
-        bar.addView(plus)
+        bar.gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        bar.addView(pill("Сейвы", false) { pick("saves") }, LinearLayout.LayoutParams(-2, -2).also { it.marginEnd = dp(8) })
+        bar.addView(pill("+ Папка", true) { pick("games") })
         wrap.addView(bar, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(8) })
         return wrap
+    }
+
+    private fun settingsPage(): View {
+        val scroll = ScrollView(this)
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        val keys = DataSeed.keysOk(this)
+        val nca = DataSeed.firmwareNca(this)
+        box.addView(infoCard(buildString {
+            append(if (keys) "Ключи ✓" else "Ключи ✗")
+            append(" · ")
+            append(if (nca >= 5) "Прошивка ✓ $nca NCA" else "Прошивка ✗")
+            append(" · игр ${games.size}\n")
+            append(DataSeed.playHome(this@HomeActivity).absolutePath)
+        }))
+        box.addView(section("Папки — можно сменить на любые. Список и прошивка пересоберутся."))
+        box.addView(pathRow("Игры (NSP/XCI)", FolderHub.gamesDirs(this).joinToString("\n") { it.absolutePath }.ifBlank { "не задано" }) { pick("games") })
+        box.addView(pathRow("Eden/files (ключи + прошивка)", FolderHub.edenPath(this)) { pick("eden") })
+        box.addView(pathRow("Сейвы", FolderHub.savesDir(this).absolutePath) { pick("saves") })
+        FolderHub.gamesDirs(this).forEach { f ->
+            box.addView(pill("убрать ${f.name}", false) {
+                FolderHub.removeGamesDir(this, f.absolutePath)
+                reload(true)
+            }, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
+        }
+        box.addView(pill("Починить всё", true) {
+            Toast.makeText(this, "чиню…", Toast.LENGTH_SHORT).show()
+            Thread({
+                FolderHub.applyAfterFolderChange(this)
+                main.post {
+                    reload(true)
+                    Toast.makeText(this, "готово · ${DataSeed.firmwareNca(this)} NCA", Toast.LENGTH_LONG).show()
+                }
+            }, "fix").start()
+        }, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(12) })
+        box.addView(section("Пресеты (пишутся в настройки Kenji)"))
+        SettingsBank.ensureCatalog(this)
+        SettingsBank.listNamed(this).forEach { name ->
+            val n = name
+            box.addView(pill(n, false) {
+                Toast.makeText(this, SettingsBank.applyNamed(this, n), Toast.LENGTH_SHORT).show()
+            }, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
+        }
+        scroll.addView(box)
+        return scroll
     }
 
     private fun statusCard(): View {
@@ -344,28 +405,19 @@ class HomeActivity : Activity() {
         card.orientation = LinearLayout.VERTICAL
         card.background = cardBg()
         card.setPadding(dp(12), dp(12), dp(12), dp(12))
-        val keys = DataSeed.keysOk(this)
-        val nca = DataSeed.firmwareNca(this)
-        val n = games.size
-        val bytes = games.sumOf { it.bytes }
         val t = TextView(this)
         t.setTextColor(TEXT)
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-        t.text = buildString {
-            append(if (keys) "Ключи ✓" else "Ключи ✗")
-            append(" · ")
-            append(if (nca >= 5) "Прошивка ✓" else "Прошивка ✗")
-            append(" · ")
-            append(if (n > 0) "Игры ✓" else "Игры ✗")
-            append(" · $n игр · ${BootLog.human(bytes)}")
-        }
+        val n = games.size
+        t.text = "${if (DataSeed.keysOk(this)) "Ключи ✓" else "Ключи ✗"} · " +
+            "${if (DataSeed.firmwareNca(this) >= 5) "Прошивка ✓" else "Прошивка ✗"} · " +
+            "${if (n > 0) "Игры ✓" else "Игры ✗"} · $n игр · ${BootLog.human(games.sumOf { it.bytes })}"
         card.addView(t)
         val chips = HorizontalScrollView(this)
         val row = LinearLayout(this)
-        row.orientation = LinearLayout.HORIZONTAL
-        GameShelf.folders(this).forEach { f ->
-            val count = games.count { File(it.path).parentFile?.absolutePath == f.absolutePath || it.folder == f.name }
+        FolderHub.gamesDirs(this).forEach { f ->
             val c = TextView(this)
+            val count = games.count { File(it.path).parentFile?.let { p -> p.absolutePath.startsWith(f.absolutePath) } == true }
             c.text = "${f.name} · $count"
             c.setTextColor(MINT)
             c.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
@@ -375,9 +427,7 @@ class HomeActivity : Activity() {
             d.setStroke(dp(1), 0x335EF0E6)
             d.cornerRadius = dp(14).toFloat()
             c.background = d
-            val lp = LinearLayout.LayoutParams(-2, -2)
-            lp.marginEnd = dp(6)
-            row.addView(c, lp)
+            row.addView(c, LinearLayout.LayoutParams(-2, -2).also { it.marginEnd = dp(6) })
         }
         chips.addView(row)
         card.addView(chips, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(8) })
@@ -406,77 +456,78 @@ class HomeActivity : Activity() {
         t.setTypeface(Typeface.DEFAULT_BOLD)
         col.addView(t)
         val s = TextView(this)
-        val cover = if (covers[g.path] != null) "обложка ✓" else "нет обложки"
-        s.text = "${g.titleId} · ${BootLog.human(g.bytes)} · $cover"
+        s.text = "${g.titleId.ifBlank { "без id" }} · ${BootLog.human(g.bytes)}\n${g.path}"
         s.setTextColor(MUTED)
         s.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
         col.addView(s)
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f).also { it.marginStart = dp(10) })
         row.setOnClickListener {
-            index = i
+            index = games.indexOfFirst { it.path == g.path }.takeIf { it >= 0 } ?: i
             show(0)
         }
         return row
     }
 
-    private fun playLabel(rom: GameRom): String {
+    private fun infoCard(text: String): View {
+        val t = TextView(this)
+        t.text = text
+        t.setTextColor(TEXT)
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        t.background = cardBg()
+        t.setPadding(dp(12), dp(12), dp(12), dp(12))
+        return t
+    }
+
+    private fun section(text: String): TextView {
+        val t = TextView(this)
+        t.text = text
+        t.setTextColor(MUTED)
+        t.setPadding(0, dp(14), 0, dp(6))
+        return t
+    }
+
+    private fun pathRow(label: String, value: String, click: () -> Unit): View {
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.background = cardBg()
+        box.setPadding(dp(12), dp(10), dp(12), dp(10))
+        val a = TextView(this)
+        a.text = label
+        a.setTextColor(MINT)
+        a.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        val b = TextView(this)
+        b.text = value
+        b.setTextColor(TEXT)
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        box.addView(a)
+        box.addView(b)
+        box.setOnClickListener { click() }
+        return LinearLayout(this).also {
+            it.addView(box, LinearLayout.LayoutParams(-1, -2).also { lp -> lp.topMargin = dp(8) })
+        }.getChildAt(0)
+    }
+
+    private fun pick(kind: String) {
+        val i = Intent()
+        i.setClassName(packageName, "dev.symbiosis.kenji.PickActivity")
+        i.putExtra("kind", kind)
+        startActivity(i)
+    }
+
+    private fun launches(rom: GameRom): String {
         val n = OfficialLaunch.launches(this, rom.titleId)
-        return if (n <= 0) "—" else "$n"
+        return if (n <= 0) "—" else n.toString()
     }
 
     private fun launchLabel(rom: GameRom): String {
         val at = OfficialLaunch.lastAt(this, rom.titleId)
-        if (at <= 0) return "—"
+        if (at <= 0L) return "—"
         val cal = java.util.Calendar.getInstance()
         cal.timeInMillis = at
         return String.format("%02d.%02d", cal.get(java.util.Calendar.DAY_OF_MONTH), cal.get(java.util.Calendar.MONTH) + 1)
     }
 
-    private fun saveLabel(rom: GameRom): String =
-        if (saveBytes(rom) > 0) "есть сейв" else "нет"
-
-    private fun saveSize(rom: GameRom): String {
-        val b = saveBytes(rom)
-        return if (b <= 0) "—" else BootLog.human(b)
-    }
-
-    private fun saveBytes(rom: GameRom): Long {
-        if (rom.titleId.isEmpty()) return 0L
-        val roots = listOf(
-            File(DataSeed.playHome(this), "bis/user/save"),
-            File(DataSeed.playHome(this), "nand/user/save"),
-            File(DataSeed.playHome(this), "load/${rom.titleId}"),
-        )
-        var sum = 0L
-        roots.forEach { if (it.exists()) sum += sizeOf(it, 0) }
-        return sum
-    }
-
-    private fun photos(rom: GameRom): Int {
-        val dir = File(DataSeed.playHome(this), "screenshots")
-        val kids = dir.listFiles() ?: return 0
-        val id = rom.titleId.lowercase()
-        return kids.count { it.isFile && (id.isEmpty() || it.name.lowercase().contains(id)) }
-    }
-
-    private fun shaders(rom: GameRom): String {
-        val dirs = listOf(
-            File(DataSeed.playHome(this), "games/${rom.titleId}/cache"),
-            File(DataSeed.playHome(this), "bis/system/save"),
-        )
-        var sum = 0L
-        dirs.forEach { if (it.exists()) sum += sizeOf(it, 0) }
-        return if (sum <= 0) "—" else BootLog.human(sum)
-    }
-
-    private fun sizeOf(dir: File, depth: Int): Long {
-        if (depth > 4) return 0L
-        var s = 0L
-        dir.listFiles()?.forEach { f ->
-            s += if (f.isFile) f.length() else sizeOf(f, depth + 1)
-        }
-        return s
-    }
+    private fun humanOrDash(b: Long): String = if (b <= 0) "—" else BootLog.human(b)
 
     private fun stat(label: String, value: String): View {
         val v = LinearLayout(this)
@@ -503,6 +554,7 @@ class HomeActivity : Activity() {
         t.setTextColor(MINT)
         t.gravity = Gravity.CENTER
         t.setPadding(dp(8), dp(10), dp(8), dp(10))
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
         t.background = tileBg()
         return t
     }
@@ -526,6 +578,21 @@ class HomeActivity : Activity() {
         t.background = d
     }
 
+    private fun pill(label: String, accent: Boolean, click: () -> Unit): TextView {
+        val t = TextView(this)
+        t.text = label
+        t.gravity = Gravity.CENTER
+        t.setTypeface(Typeface.DEFAULT_BOLD)
+        t.setTextColor(if (accent) Color.WHITE else TEXT)
+        t.setPadding(dp(18), dp(12), dp(18), dp(12))
+        val d = GradientDrawable()
+        d.setColor(if (accent) PINK else 0xFF2A2A32.toInt())
+        d.cornerRadius = dp(22).toFloat()
+        t.background = d
+        t.setOnClickListener { click() }
+        return t
+    }
+
     private fun roundBtn(label: String, click: () -> Unit): TextView {
         val t = TextView(this)
         t.text = label
@@ -537,8 +604,7 @@ class HomeActivity : Activity() {
         d.setStroke(dp(1), 0x22FFFFFF)
         d.cornerRadius = dp(22).toFloat()
         t.background = d
-        val lp = LinearLayout.LayoutParams(dp(40), dp(40))
-        t.layoutParams = lp
+        t.layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
         t.setOnClickListener { click() }
         return t
     }

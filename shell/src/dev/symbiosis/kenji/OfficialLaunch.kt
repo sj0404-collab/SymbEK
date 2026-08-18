@@ -2,42 +2,57 @@ package dev.symbiosis.kenji
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import java.io.File
 
 object OfficialLaunch {
     fun game(context: Context, rom: GameRom) {
         if (!rom.exists) {
-            toast(context, "файла игры нет")
+            toast(context, "файла игры нет — укажите папку в Настройках")
             return
         }
         if (rom.update) {
             toast(context, "это обновление, нужен базовый NSP")
             return
         }
+        FolderHub.applyAfterFolderChange(context)
         if (!DataSeed.keysOk(context) || DataSeed.firmwareNca(context) < 5) {
-            toast(context, "нет ключей или прошивки")
+            toast(context, "нет ключей или прошивки — в Настройках укажите Eden/files")
             return
         }
-        val cover = CoverArt.load(context, rom)
-        if (cover == null) {
-            toast(context, "нет обложки — Запустить скрыта, пока ROM не отдаст иконку")
-            return
-        }
-        cover.recycle()
-        try {
-            val i = Intent()
-            i.setClassName(context.packageName, "org.kenjinx.android.MainActivity")
-            i.action = "org.kenjinx.android.LAUNCH_GAME"
-            i.putExtra("bootPath", rom.path)
+        val file = File(rom.path)
+        val parent = file.parentFile
+        if (parent != null) FolderHub.addGamesDir(context, parent.absolutePath)
+        remember(context, rom)
+        val uri = Uri.fromFile(file)
+        val extras = arrayOf("bootPath", "path", "gamePath", "filePath", "romPath")
+        fun fill(i: Intent) {
+            extras.forEach { i.putExtra(it, rom.path) }
             i.putExtra("titleName", rom.title)
             i.putExtra("titleId", rom.titleId)
             i.putExtra("forceNceAndPptc", false)
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(i)
-            remember(context, rom)
-        } catch (t: Throwable) {
-            toast(context, "не открылось: ${t.message}")
+            i.setDataAndType(uri, "application/octet-stream")
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val primary = Intent().also {
+            it.setClassName(context.packageName, "org.kenjinx.android.MainActivity")
+            it.action = "org.kenjinx.android.LAUNCH_GAME"
+            fill(it)
+        }
+        val view = Intent().also {
+            it.setClassName(context.packageName, "org.kenjinx.android.MainActivity")
+            it.action = Intent.ACTION_VIEW
+            fill(it)
+        }
+        try {
+            context.startActivity(primary)
+        } catch (_: Throwable) {
+            try {
+                context.startActivity(view)
+            } catch (t: Throwable) {
+                toast(context, "не открылось: ${t.message}")
+            }
         }
     }
 
@@ -48,7 +63,7 @@ object OfficialLaunch {
             .putString("last_path", rom.path)
             .putString("last_title", rom.title)
             .putString("last_tid", rom.titleId)
-            .putLong("last_at", now)
+            .putLong("last_at_${rom.titleId}", now)
             .putLong("play_${rom.titleId}", p.getLong("play_${rom.titleId}", 0L) + 1L)
             .commit()
         try {
@@ -59,10 +74,7 @@ object OfficialLaunch {
     }
 
     fun lastAt(context: Context, tid: String): Long =
-        context.getSharedPreferences("kenji_space", Context.MODE_PRIVATE).getLong("last_at", 0L).let { at ->
-            val last = context.getSharedPreferences("kenji_space", Context.MODE_PRIVATE).getString("last_tid", "")
-            if (last == tid) at else 0L
-        }
+        context.getSharedPreferences("kenji_space", Context.MODE_PRIVATE).getLong("last_at_$tid", 0L)
 
     fun launches(context: Context, tid: String): Long =
         context.getSharedPreferences("kenji_space", Context.MODE_PRIVATE).getLong("play_$tid", 0L)
