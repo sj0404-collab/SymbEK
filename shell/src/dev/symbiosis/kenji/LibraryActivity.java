@@ -51,6 +51,7 @@ public class LibraryActivity extends Activity {
     private GridView grid;
     private EditText search;
     private TextView status;
+    private TextView banner;
     private TextView empty;
     private Adapter adapter;
     private final List<GameItem> all = new ArrayList<GameItem>();
@@ -76,6 +77,7 @@ public class LibraryActivity extends Activity {
         new Thread(() -> {
             try {
                 DataSeed.ensure(this);
+                DataSeed.adoptPaths(this, FolderStore.knownPaths(this));
                 SettingsBank.ensureBuiltins(this);
                 if (!getSharedPreferences("kenji_space", MODE_PRIVATE).getBoolean("mali_applied", false)) {
                     SettingsBank.applyDefault(this);
@@ -124,18 +126,6 @@ public class LibraryActivity extends Activity {
         title.setTypeface(Typeface.DEFAULT_BOLD);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
         head.addView(title, tp);
-        head.addView(pill("Их дом", false, new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                try {
-                    Intent i = new Intent();
-                    i.setClassName(getPackageName(), "org.kenjinx.android.MainActivity");
-                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(i);
-                } catch (Exception e) {
-                    toast("их дом не открылся");
-                }
-            }
-        }));
         head.addView(pill("Настройки", false, new View.OnClickListener() {
             @Override public void onClick(View v) {
                 startActivity(new Intent(LibraryActivity.this, SettingsActivity.class));
@@ -148,6 +138,17 @@ public class LibraryActivity extends Activity {
         status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         status.setPadding(0, dp(4), 0, dp(8));
         root.addView(status);
+
+        banner = new TextView(this);
+        banner.setTextColor(TEXT);
+        banner.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        banner.setPadding(dp(12), dp(10), dp(12), dp(10));
+        banner.setBackground(round(0x33FF4D8D, dp(10)));
+        banner.setVisibility(View.GONE);
+        banner.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { pick(REQ_DATA); }
+        });
+        root.addView(banner, lp(-1, -2, 0, 0, 0, 8));
 
         search = new EditText(this);
         search.setHint("найти игру…");
@@ -232,8 +233,11 @@ public class LibraryActivity extends Activity {
             toast("NSZ/XCZ не распакованы — нужен NSP или XCI");
             return;
         }
+        DataSeed.adoptPaths(this, FolderStore.knownPaths(this));
         if (!DataSeed.keysOk(this) || DataSeed.firmwareNca(this) < 10) {
-            toast("нет ключей или прошивки в bis/ — нажмите «Мост» или «Данные»");
+            toast("нет ключей или прошивки. Нажмите «Данные» и укажите папку Eden/Kenji (prod.keys + nand или bis)");
+            pick(REQ_DATA);
+            return;
         }
         OfficialLaunch.game(this, g);
     }
@@ -291,6 +295,11 @@ public class LibraryActivity extends Activity {
     private void refreshStatus() {
         status.setText(DataSeed.statusLine(this)
                 + " · папок " + FolderStore.folderCount(this));
+        boolean ready = DataSeed.keysOk(this) && DataSeed.firmwareNca(this) >= 10;
+        if (banner != null) {
+            banner.setVisibility(ready ? View.GONE : View.VISIBLE);
+            banner.setText("Нет ключей или прошивки — нажмите сюда и укажите папку с prod.keys и nand/ или bis/. Без этого игра не стартует (Loading).");
+        }
     }
 
     private void pick(int code) {
@@ -318,7 +327,8 @@ public class LibraryActivity extends Activity {
             String path = DataSeed.treeToPath(uri);
             if (path != null) DataSeed.setUserRoot(this, path);
             DataSeed.ensure(this);
-            refreshStatus();
+            DataSeed.adoptPaths(this, FolderStore.knownPaths(this));
+            reload(true);
             toast(path == null ? "папка данных принята" : ("данные: " + path));
         }
     }
@@ -339,11 +349,13 @@ public class LibraryActivity extends Activity {
     }
 
     private String extractMessage(String json) {
-        int i = json.indexOf("\"message\":\"");
-        if (i < 0) return json;
-        int s = i + 11;
-        int e = json.indexOf('"', s);
-        return e > s ? json.substring(s, e).replace("\\n", "\n") : json;
+        if (json != null && json.startsWith("{")) {
+            try {
+                return new org.json.JSONObject(json).optString("message", json);
+            } catch (Exception ignored) {
+            }
+        }
+        return json == null ? "" : json;
     }
 
     private int dp(int v) {

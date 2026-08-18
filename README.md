@@ -1,20 +1,17 @@
 # Kenji Space
 
-Официальный Kenji-NX **2.1.0-pr.2** целиком (GameHost, три DEX, все 18 `.so`). Иконка открывает **нативную полку** (`LibraryActivity`): обложки, запуск нажатием, пресеты графики. Игра идёт в их `MainActivity`.
+Официальный Kenji-NX **2.1.0-pr.2** только как **GameHost** (DEX + `.so`). Иконка открывает нативную полку: обложки, запуск нажатием, пресеты. Их Compose-дом больше не открывается — это и был вечный Loading без прошивки.
 
-Нет HTML, нет React, нет WebView. UI — только Android View (`LibraryActivity`, `SettingsActivity`, `GamePropsActivity`).
+Нет HTML, нет React, нет WebView, нет старого Gradle-модуля `app/`.
 
-Пакет `dev.symbiosis.kenji`. Рядом с `org.kenjinx.android` и Eden.
+Пакет `dev.symbiosis.kenji`.
 
 ## Прошивка без копии
 
-Перед стартом `SeedProvider` сканирует диск и **не копирует** NCA:
+`SeedProvider` и кнопка «Данные» сканируют диск и **не копируют** NCA:
 
-- `registered.stash` / `junk` → `registered`
-- `keys/prod.keys` → `system/prod.keys` (ключи маленькие)
-- Eden `nand/*.nca` → ярлык `bis/system/Contents/registered/{id}.nca/00`
-- чужой Kenji `bis/{id}.nca/00` → тот же ярлык
+- `prod.keys` / `keys/prod.keys` → `system/prod.keys`
+- Eden `nand/*.nca` → ярлык `bis/.../registered/{id}.nca/00`
+- чужой Kenji `bis/` → тот же ярлык
 
-Два APK читают одну прошивку. Откуда взяли — строка статуса, Настройки и `system/firmware_source.txt`.
-
-Если ярлык в чужой `Android/data` не читается (SELinux), укажите общую папку в «Данные» (`/sdcard/Eden`, `/sdcard/Switch`).
+Если статус «нет ключей / нет прошивки» — нажмите розовый баннер или «Данные» и укажите папку Eden/Kenji, где лежат `prod.keys` и `nand/` или `bis/`.

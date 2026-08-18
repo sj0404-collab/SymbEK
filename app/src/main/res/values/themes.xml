@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <style name="Theme.KenjiSpace" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="android:statusBarColor">#121214</item>
-        <item name="android:navigationBarColor">#121214</item>
-        <item name="android:windowBackground">#121214</item>
-        <item name="colorPrimary">#7B3FE4</item>
-    </style>
-</resources>

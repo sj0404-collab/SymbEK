@@ -47,6 +47,65 @@ public final class DataSeed {
         }
     }
 
+    /**
+     * Walk game folders and their parents for prod.keys / nand / bis.
+     * Official Kenji data often sits next to the dumps, not in Android/data.
+     */
+    public static void adoptPaths(Context context, List<String> extra) {
+        try {
+            File destKeys = new File(appPath(context), "system/prod.keys");
+            if (extra != null) {
+                for (String p : extra) {
+                    if (p == null || p.isEmpty()) continue;
+                    File start = new File(p);
+                    File dir = start.isFile() ? start.getParentFile() : start;
+                    for (int i = 0; i < 5 && dir != null; i++) {
+                        harvestKeys(dir, destKeys);
+                        restoreOrphanStash(dir);
+                        File files = new File(dir, "files");
+                        if (files.isDirectory()) {
+                            harvestKeys(files, destKeys);
+                            restoreOrphanStash(files);
+                        }
+                        dir = dir.getParentFile();
+                    }
+                }
+            }
+            harvestLooseKeys(context, destKeys);
+            ensureInner(context);
+        } catch (Throwable t) {
+            android.util.Log.e("KenjiSpace", "adopt", t);
+        }
+    }
+
+    private static void harvestKeys(File dir, File destKeys) {
+        if (dir == null || !dir.isDirectory()) return;
+        String[] rel = {
+                "prod.keys", "keys/prod.keys", "system/prod.keys",
+                "kenji/system/prod.keys", "Kenji/system/prod.keys",
+                "files/keys/prod.keys", "files/system/prod.keys"
+        };
+        for (String r : rel) copyKey(new File(dir, r), destKeys);
+    }
+
+    private static void harvestLooseKeys(Context context, File destKeys) {
+        File sd = Environment.getExternalStorageDirectory();
+        String[] rel = {
+                "prod.keys", "keys/prod.keys", "Download/prod.keys",
+                "Download/keys/prod.keys", "Switch/prod.keys", "Switch/keys/prod.keys",
+                "Kenji/prod.keys", "Kenji/system/prod.keys", "Eden/prod.keys",
+                "Eden/keys/prod.keys", "Eden/files/keys/prod.keys"
+        };
+        for (String r : rel) copyKey(new File(sd, r), destKeys);
+        File download = new File(sd, "Download");
+        File[] kids = download.listFiles();
+        if (kids == null) return;
+        for (File f : kids) {
+            if (f.isFile() && "prod.keys".equalsIgnoreCase(f.getName())) copyKey(f, destKeys);
+            if (f.isDirectory()) harvestKeys(f, destKeys);
+        }
+    }
+
     private static void ensureInner(Context context) {
         File dest = appPath(context);
         restoreOrphanStash(dest);

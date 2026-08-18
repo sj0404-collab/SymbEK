@@ -24,6 +24,10 @@ public final class OfficialLaunch {
 
     public static void game(Context context, String path, String title, String titleId) {
         DataSeed.ensure(context);
+        if (!DataSeed.keysOk(context) || DataSeed.firmwareNca(context) < 10) {
+            toast(context, "нет ключей/прошивки — укажите папку в «Данные», иначе будет вечный Loading");
+            return;
+        }
         String boot = resolvePath(context, path);
         if (boot.isEmpty() || (!boot.startsWith("/") && !boot.startsWith("content:"))) {
             toast(context, "нет файла игры");

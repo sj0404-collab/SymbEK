@@ -129,7 +129,7 @@ jobs:
           for i in 1 2 3 4 5; do
             if gh release create latest Kenji-Space.apk \
               --title "Kenji Space ${KENJI_VERSION_NAME}" \
-              --notes "Нативная полка (Java Activity), без HTML и без React. Игра — официальный GameHost 2.1.0-pr.2. Прошивка без копии: ярлыки bis/{id}.nca/00 → Eden nand. 11 графических пресетов. Пакет dev.symbiosis.kenji. Версия ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
+              --notes "Только нативная полка, без HTML/React/WebView и без их Compose-дома (он зависал на Loading). Игра — GameHost 2.1.0-pr.2 по нажатию. Прошивка ярлыками, без копии. Укажите «Данные» если нет ключей. Версия ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
             then
               exit 0
             fi

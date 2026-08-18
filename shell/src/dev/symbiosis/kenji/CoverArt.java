@@ -68,11 +68,34 @@ public final class CoverArt {
             if (parent != null) {
                 String[] names = {
                         stem + ".jpg", stem + ".png", stem + ".jpeg",
-                        tidU + ".jpg", tidU + ".png", tid + ".jpg", tid + ".png"
+                        tidU + ".jpg", tidU + ".png", tid + ".jpg", tid + ".png",
+                        "cover.jpg", "cover.png", "icon.jpg", "icon.png",
+                        "folder.jpg", "folder.png"
                 };
-                for (String n : names) {
-                    File f = new File(parent, n);
-                    if (f.isFile() && f.length() > 32) return f;
+                File walk = parent;
+                for (int up = 0; up < 3 && walk != null; up++) {
+                    for (String n : names) {
+                        File f = new File(walk, n);
+                        if (f.isFile() && f.length() > 32) return f;
+                    }
+                    File[] kids = walk.listFiles();
+                    if (kids != null) {
+                        String lowStem = stem.toLowerCase(Locale.US);
+                        for (File k : kids) {
+                            String kn = k.getName().toLowerCase(Locale.US);
+                            if (!k.isFile() || k.length() <= 32) continue;
+                            boolean img = kn.endsWith(".jpg") || kn.endsWith(".jpeg") || kn.endsWith(".png");
+                            if (!img) continue;
+                            if ((!tid.isEmpty() && kn.contains(tid))
+                                    || kn.contains(lowStem)
+                                    || kn.contains("chimera")
+                                    || kn.contains("cover")
+                                    || kn.contains("icon")) {
+                                return k;
+                            }
+                        }
+                    }
+                    walk = walk.getParentFile();
                 }
             }
         }

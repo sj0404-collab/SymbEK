@@ -126,6 +126,20 @@ public final class FolderStore {
         return allFolderUris(context).size();
     }
 
+    /** Real filesystem paths of added game folders (for key/firmware hunt). */
+    public static List<String> knownPaths(Context context) {
+        List<String> out = new ArrayList<String>();
+        for (String uri : allFolderUris(context)) {
+            if (uri.startsWith("/")) {
+                out.add(uri);
+                continue;
+            }
+            String real = DataSeed.treeToPath(Uri.parse(uri));
+            if (real != null) out.add(real);
+        }
+        return out;
+    }
+
     private static Set<String> allFolderUris(Context context) {
         LinkedHashSet<String> out = new LinkedHashSet<String>();
         out.addAll(uris(context));
