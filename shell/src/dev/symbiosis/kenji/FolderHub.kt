@@ -21,14 +21,15 @@ object FolderHub {
         off.getString("gameFolderPath", null)?.let { p ->
             File(p).takeIf { it.isDirectory }?.let { out.add(it) }
         }
-        if (out.isEmpty()) {
-            val sd = android.os.Environment.getExternalStorageDirectory()
-            listOf("Download/ed", "Download/Switch", "Download/NSP", "Switch", "Games").forEach { rel ->
-                val f = File(sd, rel)
-                if (f.isDirectory && hasRom(f, 0)) out.add(f)
-            }
-        }
         return out.toList()
+    }
+
+    fun revision(context: Context): Long =
+        context.getSharedPreferences(FOLDERS, Context.MODE_PRIVATE).getLong("rev", 0L)
+
+    private fun bump(context: Context) {
+        val p = context.getSharedPreferences(FOLDERS, Context.MODE_PRIVATE)
+        p.edit().putLong("rev", p.getLong("rev", 0L) + 1L).commit()
     }
 
     fun addGamesDir(context: Context, path: String) {
@@ -42,6 +43,7 @@ object FolderHub {
             .putString("gameFolderPath", f.absolutePath)
             .putString("gameFolder", f.absolutePath)
             .commit()
+        bump(context)
     }
 
     fun removeGamesDir(context: Context, path: String) {
@@ -53,6 +55,7 @@ object FolderHub {
         if (off.getString("gameFolderPath", "") == path) {
             off.edit().remove("gameFolderPath").remove("gameFolder").commit()
         }
+        bump(context)
     }
 
     fun setEden(context: Context, path: String) {
@@ -67,6 +70,7 @@ object FolderHub {
         File(path).mkdirs()
         context.getSharedPreferences(SPACE, Context.MODE_PRIVATE).edit()
             .putString(SAVES, path).commit()
+        bump(context)
     }
 
     fun savesDir(context: Context): File {

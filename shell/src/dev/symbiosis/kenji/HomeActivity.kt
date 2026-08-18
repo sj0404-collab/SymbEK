@@ -36,6 +36,8 @@ class HomeActivity : Activity() {
     private lateinit var root: LinearLayout
     private lateinit var body: FrameLayout
     private val tabs = ArrayList<TextView>()
+    private var coverView: ImageView? = null
+    private var lastRev = -1L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,7 +67,8 @@ class HomeActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        reload(false)
+        val rev = FolderHub.revision(this)
+        if (rev != lastRev) reload(true)
     }
 
     private fun askAllFiles() {
@@ -275,10 +278,16 @@ class HomeActivity : Activity() {
         d.cornerRadius = dp(22).toFloat()
         img.background = d
         img.clipToOutline = true
+        coverView = img
         val bmp = rom?.let { covers[it.path] }
         if (bmp != null) img.setImageBitmap(bmp)
-        else {
-            img.scaleType = ImageView.ScaleType.CENTER
+        else img.scaleType = ImageView.ScaleType.CENTER
+        img.setOnLongClickListener {
+            if (rom != null) {
+                index = games.indexOfFirst { it.path == rom.path }.coerceAtLeast(0)
+                show(1)
+            }
+            true
         }
         val size = dp(196)
         val flp = LinearLayout.LayoutParams(size, size)

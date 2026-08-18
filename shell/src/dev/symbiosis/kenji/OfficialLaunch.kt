@@ -2,7 +2,6 @@ package dev.symbiosis.kenji
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
 import java.io.File
 
@@ -16,42 +15,40 @@ object OfficialLaunch {
             toast(context, "это обновление, нужен базовый NSP")
             return
         }
-        FolderHub.applyAfterFolderChange(context)
         if (!DataSeed.keysOk(context) || DataSeed.firmwareNca(context) < 5) {
             toast(context, "нет ключей или прошивки — в Настройках укажите Eden/files")
             return
         }
         val file = File(rom.path)
-        val parent = file.parentFile
-        if (parent != null) FolderHub.addGamesDir(context, parent.absolutePath)
+        if (!file.isFile) {
+            toast(context, "файл исчез: ${rom.path}")
+            return
+        }
         remember(context, rom)
-        val uri = Uri.fromFile(file)
-        val extras = arrayOf("bootPath", "path", "gamePath", "filePath", "romPath")
-        fun fill(i: Intent) {
-            extras.forEach { i.putExtra(it, rom.path) }
-            i.putExtra("titleName", rom.title)
-            i.putExtra("titleId", rom.titleId)
-            i.putExtra("forceNceAndPptc", false)
-            i.setDataAndType(uri, "application/octet-stream")
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        val primary = Intent().also {
-            it.setClassName(context.packageName, "org.kenjinx.android.MainActivity")
-            it.action = "org.kenjinx.android.LAUNCH_GAME"
-            fill(it)
-        }
-        val view = Intent().also {
-            it.setClassName(context.packageName, "org.kenjinx.android.MainActivity")
-            it.action = Intent.ACTION_VIEW
-            fill(it)
-        }
+        SpaceHook.armTimer()
+        val intent = Intent()
+        intent.setClassName(context.packageName, "org.kenjinx.android.MainActivity")
+        intent.action = "org.kenjinx.android.LAUNCH_GAME"
+        // Official handleIntent reads these names. Do not set file:// — FileUriExposedException.
+        intent.putExtra("bootPath", rom.path)
+        intent.putExtra("titleName", rom.title)
+        intent.putExtra("titleId", rom.titleId)
+        intent.putExtra("forceNceAndPptc", false)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
-            context.startActivity(primary)
-        } catch (_: Throwable) {
+            context.startActivity(intent)
+        } catch (t: Throwable) {
+            val view = Intent()
+            view.setClassName(context.packageName, "org.kenjinx.android.MainActivity")
+            view.action = Intent.ACTION_VIEW
+            view.putExtra("bootPath", rom.path)
+            view.putExtra("titleName", rom.title)
+            view.putExtra("titleId", rom.titleId)
+            view.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             try {
                 context.startActivity(view)
-            } catch (t: Throwable) {
-                toast(context, "не открылось: ${t.message}")
+            } catch (t2: Throwable) {
+                toast(context, "не открылось: ${t2.message}")
             }
         }
     }
