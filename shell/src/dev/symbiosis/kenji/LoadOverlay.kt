@@ -29,6 +29,7 @@ object LoadOverlay {
                 bar = it
             }
         }
+        fading = false
         view.start(title)
         if (view.parent == null) {
             val lp = WindowManager.LayoutParams()
@@ -65,6 +66,15 @@ object LoadOverlay {
         buryKenji(activity)
     }
 
+    @Volatile private var fading = false
+
+    fun onGameFps(activity: Activity) {
+        val view = bar ?: return
+        if (fading) return
+        fading = true
+        view.completeThenFade { hide(activity) }
+    }
+
     fun hide(activity: Activity? = host) {
         val view = bar ?: return
         view.stop()
@@ -81,8 +91,10 @@ object LoadOverlay {
         }
         bar = null
         host = null
+        fading = false
     }
 
+    /** Official Kenji dialog stays, but fully invisible — no flash, no fight. */
     fun buryKenji(activity: Activity) {
         try {
             val wm = activity.windowManager
@@ -92,14 +104,11 @@ object LoadOverlay {
                 if (SpaceHook.isLibraryWindow(root)) continue
                 try {
                     val lp = root.layoutParams
-                    if (lp is WindowManager.LayoutParams) {
+                    if (lp is WindowManager.LayoutParams && lp.alpha != 0f) {
                         lp.alpha = 0f
-                        lp.width = 1
-                        lp.height = 1
                         wm.updateViewLayout(root, lp)
                     }
-                    root.alpha = 0f
-                    root.visibility = View.GONE
+                    if (root.alpha != 0f) root.alpha = 0f
                 } catch (_: Throwable) {
                 }
             }

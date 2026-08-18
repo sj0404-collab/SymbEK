@@ -258,23 +258,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     private fun hideOfficialLoader(host: Activity?) {
-        try {
-            for (root in allWindows()) {
-                if (ours(root) || isOurDialog(root)) continue
-                if (looksLikeLibrary(root)) continue
-                val hit = findOfficialLoader(root, 0) || isKenjiLoadWindow(root)
-                if (!hit) continue
-                val vg = root as? ViewGroup ?: continue
-                for (i in 0 until vg.childCount) {
-                    val c = vg.getChildAt(i)
-                    if (c.tag == TAG_INJECT || c.tag == TAG_LOAD) continue
-                    c.visibility = View.GONE
-                    c.alpha = 0f
-                }
-                if (host != null) plantLoader(host, vg)
-            }
-        } catch (_: Throwable) {
-        }
+        if (host != null) LoadOverlay.buryKenji(host)
     }
 
     private fun plantLoader(host: Activity, vg: ViewGroup) {
@@ -436,12 +420,11 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         if (game && !official) {
             panel?.collapse()
             panel?.visibility = View.GONE
-            (load as? LoadBar)?.stop()
             load?.visibility = View.GONE
-            LoadOverlay.hide(activity)
             stripInjected()
             hud?.visibility = View.VISIBLE
             hud?.start()
+            LoadOverlay.buryKenji(activity)
             unshiftOfficial(content, panel)
             hideOfficialBottomHud(content)
         } else if (busy) {
@@ -837,12 +820,41 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             main.post(tick)
         }
 
+        fun completeThenFade(done: () -> Unit) {
+            running = false
+            main.removeCallbacks(tick)
+            shown = 100f
+            val tw = track.width
+            if (tw > 0) {
+                fill.layoutParams.width = tw - dp(4)
+                fill.requestLayout()
+            }
+            meta.text = String.format("%d:%02d   ·   100%%   ·   готово",
+                if (t0 == 0L) 0 else ((android.os.SystemClock.elapsedRealtime() - t0) / 1000L) / 60,
+                if (t0 == 0L) 0 else ((android.os.SystemClock.elapsedRealtime() - t0) / 1000L) % 60)
+            var a = 1f
+            val fade = object : Runnable {
+                override fun run() {
+                    a -= 0.07f
+                    alpha = a.coerceAtLeast(0f)
+                    if (a > 0f) {
+                        main.postDelayed(this, 32)
+                    } else {
+                        stop()
+                        done()
+                    }
+                }
+            }
+            main.postDelayed(fade, 220)
+        }
+
         fun stop() {
             running = false
             main.removeCallbacks(tick)
             shown = 0f
             t0 = 0L
             log.text = ""
+            alpha = 1f
         }
 
         private fun dp(v: Int): Int =
@@ -1252,6 +1264,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                 return
             }
             stats.visibility = VISIBLE
+            if (fps >= 1.0) LoadOverlay.onGameFps(host)
             val cpu = CpuMeter.sample()
             val speed = if (fps <= 0) 0 else (fps / 60.0 * 100.0)
             val scale = SettingsBank.scaleOf(host)

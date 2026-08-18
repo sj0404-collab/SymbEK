@@ -92,6 +92,8 @@ jobs:
 
           python3 official/patch_official.py /tmp/official-apktool \
             "$KENJI_VERSION_CODE" "$KENJI_VERSION_NAME"
+          python3 -m pip install -q pillow
+          python3 official/replace_icon.py /tmp/official-apktool official/icon_master.png
           python3 official/inject_shell.py /tmp/official-apktool /tmp/shell-dex/classes.dex
           grep -q 'dev.symbiosis.kenji.SeedProvider' /tmp/official-apktool/AndroidManifest.xml
           grep -q 'org.kenjinx.android.MainActivity' /tmp/official-apktool/AndroidManifest.xml
