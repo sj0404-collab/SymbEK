@@ -36,6 +36,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     private const val TAG = "space-panel"
     private const val TAG_HUD = "space-hud"
     private const val TAG_LOAD = "space-load"
+    private const val TAG_INJECT = "space-load-inject"
     private const val MINT = 0xFF5EF0E6.toInt()
     private const val RED = 0xFFFF3B30.toInt()
     private const val BG = 0xFF2A2A32.toInt()
@@ -91,13 +92,12 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     private fun launching(activity: Activity, content: ViewGroup): Boolean {
-        if (hasGameSurface(content)) {
+        if (hasGameSurface(content) && !officialGameDialog()) {
             waitGame = false
             return false
         }
         val title = scrapeLoadingTitle()
-        val gameLoad = title != null && looksGameLoad(title)
-        if (gameLoad || officialGameDialog()) {
+        if ((title != null && looksGameLoad(title)) || officialGameDialog()) {
             waitGame = true
             return true
         }
@@ -127,8 +127,37 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
 
     private fun officialGameDialog(): Boolean {
         for (root in allWindows()) {
-            if (ours(root) || isOurDialog(root) || isFullScreen(root)) continue
+            if (ours(root) || isOurDialog(root)) continue
+            if (looksLikeLibrary(root)) continue
             if (findOfficialLoader(root, 0)) return true
+            if (isKenjiLoadWindow(root)) return true
+        }
+        return false
+    }
+
+    private fun isKenjiLoadWindow(root: View): Boolean {
+        if (looksLikeLibrary(root)) return false
+        if (isFullScreen(root)) {
+            return hasTinyCard(root, 0)
+        }
+        val dm = root.resources.displayMetrics
+        val w = root.width / dm.density
+        val h = root.height / dm.density
+        return w in 140f..480f && h in 70f..320f
+    }
+
+    private fun hasTinyCard(v: View, depth: Int): Boolean {
+        if (depth > 10 || ours(v)) return false
+        val dm = v.resources.displayMetrics
+        if (v.width > 0 && v.height > 0) {
+            val w = v.width / dm.density
+            val h = v.height / dm.density
+            if (w in 160f..420f && h in 80f..260f) return true
+        }
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) {
+                if (hasTinyCard(v.getChildAt(i), depth + 1)) return true
+            }
         }
         return false
     }
@@ -194,7 +223,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         repeat(12) {
             val cur = p ?: return false
             val t = cur.tag
-            if (t == TAG || t == TAG_HUD || t == TAG_LOAD) return true
+            if (t == TAG || t == TAG_HUD || t == TAG_LOAD || t == TAG_INJECT) return true
             p = cur.parent as? View
         }
         return false
@@ -217,10 +246,48 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     private fun hideOfficialLoader() {
+        hideOfficialLoader(null)
+    }
+
+    private fun hideOfficialLoader(host: Activity?) {
         try {
             for (root in allWindows()) {
-                if (ours(root)) continue
-                buryOfficialLoader(root, 0)
+                if (ours(root) || isOurDialog(root)) continue
+                if (looksLikeLibrary(root)) continue
+                val hit = findOfficialLoader(root, 0) || isKenjiLoadWindow(root)
+                if (!hit) continue
+                val vg = root as? ViewGroup ?: continue
+                for (i in 0 until vg.childCount) {
+                    val c = vg.getChildAt(i)
+                    if (c.tag == TAG_INJECT || c.tag == TAG_LOAD) continue
+                    c.visibility = View.GONE
+                    c.alpha = 0f
+                }
+                if (host != null) plantLoader(host, vg)
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun plantLoader(host: Activity, vg: ViewGroup) {
+        var bar = vg.findViewWithTag<View>(TAG_INJECT) as? LoadBar
+        if (bar == null) {
+            bar = LoadBar(host)
+            bar.tag = TAG_INJECT
+            vg.addView(bar, ViewGroup.LayoutParams(-1, -1))
+        }
+        bar.visibility = View.VISIBLE
+        bar.bringToFront()
+        bar.elevation = 128f
+        bar.start(scrapeLoadingTitle() ?: "загрузка игры")
+    }
+
+    private fun stripInjected() {
+        try {
+            for (root in allWindows()) {
+                val vg = root as? ViewGroup ?: continue
+                val bar = vg.findViewWithTag<View>(TAG_INJECT) ?: continue
+                vg.removeView(bar)
             }
         } catch (_: Throwable) {
         }
@@ -352,28 +419,31 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     private fun applyMode(activity: Activity) {
         val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
         val game = inGame(activity)
-        val busy = launching(activity, content)
-        DataSeed.allowEnsure = !game
+        val official = officialGameDialog()
+        val busy = launching(activity, content) || official
+        DataSeed.allowEnsure = !game || official
         val panel = content.findViewWithTag<View>(TAG) as? Panel
         val hud = content.findViewWithTag<View>(TAG_HUD) as? PlayHud
         val load = content.findViewWithTag<View>(TAG_LOAD)
-        if (game) {
+        if (game && !official) {
             panel?.collapse()
             panel?.visibility = View.GONE
             (load as? LoadBar)?.stop()
             load?.visibility = View.GONE
+            stripInjected()
             hud?.visibility = View.VISIBLE
             hud?.start()
             unshiftOfficial(content, panel)
             hideOfficialBottomHud(content)
         } else if (busy) {
+            waitGame = true
             panel?.collapse()
             panel?.visibility = View.GONE
             hud?.visibility = View.GONE
             hud?.stop()
             load?.visibility = View.VISIBLE
             (load as? LoadBar)?.start(scrapeLoadingTitle() ?: loadingTitle(content) ?: "загрузка игры")
-            hideOfficialLoader()
+            hideOfficialLoader(activity)
             unshiftOfficial(content, panel)
         } else {
             panel?.visibility = View.VISIBLE
@@ -381,14 +451,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud?.stop()
             (load as? LoadBar)?.stop()
             load?.visibility = View.GONE
-            if (panel != null) panel.post { shiftOfficial(content, panel) }
-        }
-    }
-
-    private fun hideOfficialBottomHud(root: ViewGroup) {
-        try {
-            walkHide(root, 0)
-        } catch (_: Throwable) {
+            stripInjected()
+            if (panel !      } catch (_: Throwable) {
         }
     }
 
@@ -649,7 +713,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                 val live = BootLog.lastKernel().ifBlank { BootLog.tail(1) }
                 val tail = BootLog.tail(3)
                 log.text = listOf(step, live, tail).filter { it.isNotBlank() }.distinct().joinToString("\n")
-                hideOfficialLoader()
+                hideOfficialLoader(host)
                 main.postDelayed(this, 32)
             }
         }
@@ -1159,6 +1223,16 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             paintStats()
             Choreographer.getInstance().postFrameCallback(cb)
         }
+
+        fun stop() {
+            running = false
+        }
+
+        private fun dp(v: Int): Int =
+            Math.round(v * resources.displayMetrics.density)
+    }
+}
+
 
         fun stop() {
             running = false
