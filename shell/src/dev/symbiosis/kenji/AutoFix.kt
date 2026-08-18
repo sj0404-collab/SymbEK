@@ -2,56 +2,100 @@ package dev.symbiosis.kenji
 
 import android.content.Context
 import android.os.Environment
+import android.system.ErrnoException
 import android.system.Os
 import android.util.Log
 import java.io.File
 
 /**
  * The original Space auto-fix, without crashing official Kenji:
- * stash/junk → registered, keys/ → system/prod.keys,
- * Eden nand .nca → playHome bis id.nca/00 as shortcuts (no copy).
+ * stash/junk to registered, keys/ to system/prod.keys,
+ * Eden nand .nca to playHome bis id.nca/00 as shortcuts (no copy).
  */
 object AutoFix {
     @Volatile var lastLog: String = ""
         private set
 
+    @Volatile var lastErr: String = ""
+
     fun run(context: Context) {
         val lines = ArrayList<String>()
+        lastErr = ""
         try {
+            BootLog.add("AutoFix.start")
             val play = DataSeed.playHome(context)
             val eden = findEden(context)
             val roots = listOfNotNull(play, eden)
             for (root in roots) {
                 val n = restoreStash(root)
-                if (n > 0) lines.add("stash→registered $n в ${root.absolutePath}")
+                if (n > 0) {
+                    lines.add("stash→registered $n в ${root.absolutePath}")
+                    BootLog.add("stash→registered $n · ${root.absolutePath}")
+                }
             }
             val keys = File(play, "system/prod.keys")
             if (eden != null) {
                 copyKey(File(eden, "keys/prod.keys"), keys)
                 copyKey(File(eden, "system/prod.keys"), keys)
             }
+            val appKeys = File(context.getExternalFilesDir(null), "system/prod.keys")
+            copyKey(appKeys, keys)
             copyKey(File(Environment.getExternalStorageDirectory(), "keys/prod.keys"), keys)
-            if (keys.isFile && keys.length() > 100) lines.add("ключи ${keys.length() / 1024} КБ")
+            if (keys.isFile && keys.length() > 100) {
+                lines.add("ключи ${keys.length()} Б (${BootLog.human(keys.length())})")
+                BootLog.add("ключи ${keys.absolutePath} ${keys.length()} Б")
+            } else {
+                lines.add("ключи не найдены в ${keys.absolutePath}")
+                BootLog.add("ключи нет → ${keys.absolutePath}")
+            }
 
             val destReg = File(play, "bis/system/Contents/registered")
-            destReg.mkdirs()
             var linked = 0
             if (eden != null) {
                 val kenjiReg = File(eden, "bis/system/Contents/registered")
                 val nandReg = File(eden, "nand/system/Contents/registered")
                 val nand = File(eden, "nand")
-                when {
-                    countKenji(kenjiReg) >= 5 -> linked = linkTree(kenjiReg, destReg)
-                    countLoose(nandReg) >= 5 -> linked = linkLoose(nandReg, destReg)
-                    countLoose(nand) >= 5 -> linked = linkLoose(nand, destReg)
-                }
+                val kN = countKenji(kenjiReg)
+                val nN = countLoose(nandReg)
+                val nL = countLoose(nand)
+                val kB = BootLog.registeredBytes(kenjiReg)
+                val nB = BootLog.registeredBytes(nandReg)
                 lines.add("Eden ${eden.absolutePath}")
+                lines.add("источник kenji-bis: $kN NCA · ${BootLog.human(kB)}")
+                lines.add("источник eden-nand: $nN NCA · ${BootLog.human(nB)}")
+                BootLog.add("источник kenji $kN NCA ${BootLog.human(kB)} · nand $nN NCA ${BootLog.human(nB)}")
+                if (samePath(kenjiReg, destReg) && kN >= 5) {
+                    linked = kN
+                    lines.add("игра читает Eden bis на месте (без моста)")
+                    BootLog.add("без моста: dest=источник $kN NCA")
+                } else {
+                    destReg.mkdirs()
+                    when {
+                        kN >= 5 -> linked = linkTree(kenjiReg, destReg)
+                        nN >= 5 -> linked = linkLoose(nandReg, destReg)
+                        nL >= 5 -> linked = linkLoose(nand, destReg)
+                    }
+                    if (linked == 0 && lastErr.isNotEmpty()) {
+                        lines.add("мост не встал: $lastErr")
+                        BootLog.add("мост FAIL $lastErr")
+                    } else {
+                        BootLog.add("мост ярлыков $linked")
+                    }
+                }
             }
             val n = countKenji(destReg)
-            lines.add(if (n >= 5) "Kenji bis: $n NCA (ярлыки $linked)" else "Kenji bis пуст после моста ($n)")
+            val bytes = BootLog.registeredBytes(destReg)
+            val line = if (n >= 5) {
+                "Kenji bis: $n NCA · ${BootLog.human(bytes)} (ярлыки $linked)"
+            } else {
+                "Kenji bis пуст после моста ($n) · ${destReg.absolutePath}"
+            }
+            lines.add(line)
+            BootLog.add(line)
         } catch (t: Throwable) {
             Log.e("KenjiSpace", "autofix", t)
             lines.add("ошибка автопочинки: ${t.message}")
+            BootLog.add("AutoFix исключение ${t.message}")
         }
         lastLog = lines.joinToString("\n")
         Log.i("KenjiSpace", "autofix\n$lastLog")
@@ -88,7 +132,6 @@ object AutoFix {
         try {
             val parent = File(root, "bis/system/Contents")
             if (!parent.isDirectory) {
-                // also accept root already being Contents
                 val alt = File(root, "system/Contents")
                 if (alt.isDirectory) return restoreStashAt(alt)
                 return 0
@@ -155,14 +198,21 @@ object AutoFix {
         return try {
             Os.symlink(payload.absolutePath, dest.absolutePath)
             dest.exists()
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            lastErr = "symlink ${err(t)}"
             try {
                 Os.link(payload.absolutePath, dest.absolutePath)
                 dest.isFile && dest.length() == payload.length()
-            } catch (_: Throwable) {
+            } catch (t2: Throwable) {
+                lastErr = "symlink ${err(t)} · hardlink ${err(t2)}"
                 false
             }
         }
+    }
+
+    private fun err(t: Throwable): String {
+        val e = t as? ErrnoException
+        return if (e != null) "errno=${e.errno} ${e.message}" else (t.message ?: t.javaClass.simpleName)
     }
 
     private fun copyKey(from: File, to: File) {
@@ -183,5 +233,11 @@ object AutoFix {
     private fun countLoose(dir: File?): Int {
         val kids = dir?.listFiles() ?: return 0
         return kids.count { it.isFile && it.name.lowercase().endsWith(".nca") && it.length() > 1000 }
+    }
+
+    private fun samePath(a: File, b: File): Boolean = try {
+        a.canonicalPath == b.canonicalPath
+    } catch (_: Exception) {
+        a.absolutePath == b.absolutePath
     }
 }

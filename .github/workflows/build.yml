@@ -141,7 +141,7 @@ jobs:
           for i in 1 2 3 4 5; do
             if gh release create latest Kenji-Space.apk \
               --title "Kenji Space ${KENJI_VERSION_NAME}" \
-              --notes "Автопочинка как раньше: stash→registered, keys→system, nand→bis/00 ярлыками. Пояснения в настройках. ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
+              --notes "Журнал запуска (порядок + JNI) и вес прошивки (NCA · ГБ). AppPath на Eden/files до ядра, без копии. ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
             then
               exit 0
             fi

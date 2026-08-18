@@ -13,14 +13,26 @@ import android.util.Log
 class SeedProvider : ContentProvider() {
     override fun onCreate(): Boolean {
         try {
+            BootLog.add("1. SeedProvider.onCreate")
             val ctx = context
             if (ctx != null) {
+                BootLog.captureVersion(ctx)
                 WebWipe.run(ctx)
+                BootLog.add("2. WebWipe")
                 val app = ctx.applicationContext
-                if (app is android.app.Application) SpaceHook.install(app)
+                if (app is android.app.Application) {
+                    SpaceHook.install(app)
+                    BootLog.add("3. SpaceHook.install")
+                }
+                DataSeed.pointHomeEarly(ctx)
+                BootLog.add("4. pointHomeEarly готово")
+                BootLog.startLogcat()
+            } else {
+                BootLog.add("SeedProvider: context=null")
             }
         } catch (t: Throwable) {
             Log.e("KenjiSpace", "auto-seed", t)
+            BootLog.add("SeedProvider ошибка: ${t.message}")
         }
         return true
     }

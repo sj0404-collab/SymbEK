@@ -82,10 +82,13 @@ object FirmwareHunt {
             "NCA не найдены. all-files=${if (all) "да" else "НЕТ"} · корней ${roots.size}. Укажите папку, где лежат .nca (Eden nand или firmware)."
         } else {
             hits.sortedByDescending { it.nca }.take(6).joinToString("\n") {
-                "${it.nca} NCA ${if (it.kenjiLayout) "kenji" else "eden"} · ${it.dir.absolutePath}"
+                val bytes = BootLog.registeredBytes(it.dir)
+                "${it.nca} NCA · ${BootLog.human(bytes)} ${if (it.kenjiLayout) "kenji" else "eden"} · ${it.dir.absolutePath}"
             }
         }
         Log.i("KenjiSpace", "hunt\n$lastReport")
+        val bestN = hits.maxByOrNull { it.nca }
+        BootLog.add("сканер: ${hits.size} мест, лучшее ${bestN?.nca ?: 0} NCA ${if (bestN != null) BootLog.human(BootLog.registeredBytes(bestN.dir)) else ""}")
         return lastHits.firstOrNull()
     }
 
