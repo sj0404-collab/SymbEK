@@ -96,8 +96,8 @@ jobs:
           python3 official/replace_icon.py /tmp/official-apktool official/icon_master.png
           python3 official/inject_shell.py /tmp/official-apktool /tmp/shell-dex/classes.dex
           grep -q 'dev.symbiosis.kenji.SeedProvider' /tmp/official-apktool/AndroidManifest.xml
+          grep -q 'dev.symbiosis.kenji.HomeActivity' /tmp/official-apktool/AndroidManifest.xml
           grep -q 'org.kenjinx.android.MainActivity' /tmp/official-apktool/AndroidManifest.xml
-          ! grep -q 'HomeActivity' /tmp/official-apktool/AndroidManifest.xml
           ! grep -q 'LibraryActivity' /tmp/official-apktool/AndroidManifest.xml
           python3 official/check_launcher.py /tmp/official-apktool/AndroidManifest.xml
 
