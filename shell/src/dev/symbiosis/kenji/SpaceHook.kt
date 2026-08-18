@@ -47,6 +47,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     @Volatile private var installed = false
     @Volatile private var seeded = false
     @Volatile private var waitGame = false
+    @Volatile private var tappedAt = 0L
     private val main = Handler(Looper.getMainLooper())
 
     fun install(app: Application) {
@@ -101,9 +102,12 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             waitGame = true
             return true
         }
-        if (waitGame && looksLikeLibrary(content)) {
-            waitGame = false
-            return false
+        if (waitGame && looksLikeLibrary(content) && !officialGameDialog()) {
+            val age = android.os.SystemClock.elapsedRealtime() - tappedAt
+            if (age > 12_000L) {
+                waitGame = false
+                return false
+            }
         }
         return waitGame
     }
@@ -522,9 +526,31 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         return x >= loc[0] && x < loc[0] + v.width && y >= loc[1] && y < loc[1] + v.height
     }
 
+    private fun beginGameLoad(activity: Activity, name: String = "загрузка игры") {
+        waitGame = true
+        tappedAt = android.os.SystemClock.elapsedRealtime()
+        BootLog.add("тап по обложке → наш индикатор")
+        try {
+            applyMode(activity)
+            hideOfficialLoader(activity)
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun onGameGrid(activity: Activity, ev: MotionEvent): Boolean {
+        if (onOurChrome(activity, ev)) return false
+        val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return false
+        val h = content.height
+        if (h <= 0) return false
+        val panel = content.findViewWithTag<View>(TAG)
+        val top = (panel?.height ?: 0) + dp(activity, 64)
+        val bot = h - dp(activity, 92)
+        return ev.y > top && ev.y < bot
+    }
+
     private fun onOurChrome(activity: Activity, ev: MotionEvent): Boolean {
         val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return false
-        listOf(TAG, TAG_HUD, TAG_LOAD).forEach { tag ->
+        listOf(TAG, TAG_HUD, TAG_LOAD, TAG_INJECT).forEach { tag ->
             val v = content.findViewWithTag<View>(tag)
             if (v != null && v.visibility == View.VISIBLE && hit(v, ev)) {
                 if (tag == TAG_HUD) {
@@ -557,6 +583,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                 MotionEvent.ACTION_DOWN -> {
                     cancel()
                     hold = false
+                    moved = false
+                    grid = onGameGrid(host, ev)
                     val content = host.findViewById<ViewGroup>(android.R.id.content)
                     if (content != null && !inGame(host) && !onOurChrome(host, ev) && !launching(host, content)) {
                         sx = ev.rawX
@@ -572,7 +600,10 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                 MotionEvent.ACTION_MOVE -> {
                     val dx = ev.rawX - sx
                     val dy = ev.rawY - sy
-                    if (dx * dx + dy * dy > slop * slop) cancel()
+                    if (dx * dx + dy * dy > slop * slop) {
+                        moved = true
+                        cancel()
+                    }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     cancel()
@@ -580,6 +611,10 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                         hold = false
                         return true
                     }
+                    val go = ev.actionMasked == MotionEvent.ACTION_UP && grid && !moved && !inGame(host)
+                    val handled = base.dispatchTouchEvent(ev)
+                    if (go) beginGameLoad(host)
+                    return handled
                 }
             }
             return base.dispatchTouchEvent(ev)
