@@ -1232,13 +1232,3 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             Math.round(v * resources.displayMetrics.density)
     }
 }
-
-
-        fun stop() {
-            running = false
-        }
-
-        private fun dp(v: Int): Int =
-            Math.round(v * resources.displayMetrics.density)
-    }
-}
