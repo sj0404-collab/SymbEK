@@ -298,7 +298,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             summary.text = "Kenji Space  ·  $fw  ·  ${if (open) "свернуть" else "развернуть"}"
             val keysFile = java.io.File(DataSeed.playHome(host), "system/prod.keys")
             val keys = if (keysFile.isFile && keysFile.length() > 100) "ключи ${keysFile.length() / 1024} КБ" else "нет ключей"
-            status.text = "$keys\nпрошивка: ${DataSeed.firmwareSource(host)}\n${AccessFix.statusLine(host)}\n— сканер —\n${FirmwareHunt.lastReport}"
+            status.text = "$keys\nпрошивка: ${DataSeed.firmwareSource(host)}\n${AccessFix.statusLine(host)}\n— автопочинка —\n${AutoFix.lastLog}\n— сканер —\n${FirmwareHunt.lastReport}"
             fillPresets()
         }
 

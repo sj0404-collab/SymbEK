@@ -72,6 +72,7 @@ object DataSeed {
         repairAppPath(context)
         AccessFix.repair(context)
         autoDiscoverEden(context)
+        AutoFix.run(context)
         val destKeys = File(dest, "system/prod.keys")
         for (src in sources(context)) {
             PathFix.repairTree(src)

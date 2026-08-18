@@ -46,16 +46,22 @@ s = strings.read_text(encoding="utf-8")
 s = s.replace(">Kenji-NX<", ">Kenji Space<", 1)
 s = s.replace(">Kenji-NX Optimized<", ">Kenji Space<", 1)
 for old, new in [
-    ("Install Firmware", "Install Firmware (Space already points bis/ at Eden nand via shortcuts)"),
-    ("No firmware installed", "No firmware in bis/. Space looks at Eden nand — no copy."),
-    ("Firmware", "Firmware (bis/{id}.nca/00 = shortcut to nand)"),
-    ("prod.keys", "prod.keys (system/prod.keys, not keys/)"),
+    (
+        "Install Firmware",
+        "Install Firmware (Kenji: bis/.../registered/{id}.nca/00 — not Eden nand/*.nca)",
+    ),
+    (
+        "No firmware installed",
+        "No firmware in bis/. If you have registered.stash — rename to registered. Loading = empty bis/.",
+    ),
+    ("Firmware", "Firmware (bis/{id}.nca/00, not Eden nand/*.nca)"),
+    ("prod.keys", "prod.keys (Kenji: system/prod.keys only, not keys/)"),
 ]:
     s = s.replace(f">{old}<", f">{new}<", 1)
 if "kenji_space_fw_hint" not in s:
     s = s.replace(
         "</resources>",
-        "    <string name=\"kenji_space_fw_hint\">Прошивка не копируется. Ярлыки bis/{id}.nca/00 → Eden nand. Путь: system/firmware_source.txt</string>\n</resources>",
+        "    <string name=\"kenji_space_fw_hint\">Kenji читает bis/{id}.nca/00, не Eden nand/*.nca. Space сам: stash/junk→registered, keys/→system/prod.keys, nand→ярлыки 00. Вечный Loading = нет прошивки в bis/.</string>\n</resources>",
         1,
     )
 strings.write_text(s, encoding="utf-8")
