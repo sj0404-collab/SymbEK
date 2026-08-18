@@ -1,0 +1,64 @@
+package dev.symbiosis.kenji
+
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import android.provider.DocumentsContract
+import android.widget.Toast
+import java.io.File
+
+/** SAF tree picker. kind=eden|kenji */
+class PickActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+        i.addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+        )
+        startActivityForResult(i, 7)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        val uri = data?.data
+        if (resultCode == RESULT_OK && uri != null) {
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            } catch (_: Exception) {
+            }
+            val path = treeToPath(uri)
+            val kind = intent.getStringExtra("kind") ?: "eden"
+            if (path != null) {
+                if (kind == "kenji") DataSeed.setKenjiDir(this, path) else DataSeed.setEdenDir(this, path)
+                Toast.makeText(this, "$kind: $path", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "не смог разобрать путь папки", Toast.LENGTH_LONG).show()
+            }
+        }
+        finish()
+    }
+
+    companion object {
+        fun treeToPath(uri: Uri): String? {
+            return try {
+                val id = DocumentsContract.getTreeDocumentId(uri)
+                val parts = id.split(":", limit = 2)
+                val rel = if (parts.size > 1) parts[1] else ""
+                if (parts[0].equals("primary", true)) {
+                    val f = File(android.os.Environment.getExternalStorageDirectory(), rel)
+                    if (f.isDirectory) return f.absolutePath
+                }
+                val alt = File("/storage/${parts[0]}/$rel")
+                if (alt.isDirectory) alt.absolutePath else null
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+}

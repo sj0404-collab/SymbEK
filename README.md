@@ -4,8 +4,8 @@
 
 Поверх — только Kotlin:
 
-- `SeedProvider` до их `Application`: ключи, ярлыки прошивки, пресеты
-- прошивка **не копируется**: `nand/*.nca` → `bis/.../{id}.nca/00` (symlink/hardlink)
-- настройки пишутся в их QuickSettings (`resScale`, NCE, PPTC, DRAM…)
+- панель на их MainActivity: **Eden/files**, **Kenji** (куда идут ярлыки), **Сохранить**, вкладка **Пресеты**
+- после сохранения оверлей: ключи, число NCA, источник; под ним их сетка игр
+- прошивка **не копируется**: `nand/*.nca` → `Kenji/bis/.../{id}.nca/00`
 
 Пакет `dev.symbiosis.kenji`. Нет HTML, нет React, нет Java-шелла, нет WebView-UI.

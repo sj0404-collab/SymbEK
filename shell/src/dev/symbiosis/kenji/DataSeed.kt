@@ -18,9 +18,41 @@ object DataSeed {
     private const val PREF = "kenji_space"
     private const val PREF_SRC = "fw_source"
     private const val PREF_MODE = "fw_mode"
+    private const val PREF_EDEN = "eden_dir"
+    private const val PREF_KENJI = "kenji_dir"
 
     fun appPath(context: Context): File =
         context.getExternalFilesDir(null) ?: context.filesDir
+
+    fun kenjiHome(context: Context): File {
+        val p = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(PREF_KENJI, "")
+        if (!p.isNullOrBlank()) {
+            val f = File(p)
+            if (f.isDirectory || f.mkdirs()) return f
+        }
+        val guess = File(Environment.getExternalStorageDirectory(), "Kenji")
+        if (guess.isDirectory) return guess
+        return appPath(context)
+    }
+
+    fun edenDir(context: Context): String? {
+        val p = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(PREF_EDEN, "")
+        return p?.takeIf { it.isNotBlank() && File(it).isDirectory }
+    }
+
+    fun setEdenDir(context: Context, path: String) {
+        var p = path
+        val files = File(path, "files")
+        if (File(path, "nand").isDirectory.not() && files.isDirectory) p = files.absolutePath
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString(PREF_EDEN, p).commit()
+        ensure(context)
+    }
+
+    fun setKenjiDir(context: Context, path: String) {
+        File(path).mkdirs()
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString(PREF_KENJI, path).commit()
+        ensure(context)
+    }
 
     fun ensure(context: Context) {
         try {
@@ -31,7 +63,8 @@ object DataSeed {
     }
 
     private fun ensureInner(context: Context) {
-        val dest = appPath(context)
+        val dest = kenjiHome(context)
+        pointAppPath(context, dest)
         restoreOrphanStash(dest)
         val destKeys = File(dest, "system/prod.keys")
         for (src in sources(context)) {
@@ -45,6 +78,15 @@ object DataSeed {
             remember(context, destReg.absolutePath, modeOf(destReg), countKenji(destReg))
             writeReport(context, dest)
             return
+        }
+        edenDir(context)?.let { eden ->
+            val root = File(eden)
+            val registered = File(root, "nand/system/Contents/registered")
+            val nand = File(root, "nand")
+            when {
+                countAnyNca(registered) >= 10 && bridgeFirmware(context, registered, destReg) -> return
+                countAnyNca(nand) >= 10 && bridgeFirmware(context, nand, destReg) -> return
+            }
         }
         for (src in sources(context)) {
             val kenji = File(src, "bis/system/Contents/registered")
@@ -64,12 +106,16 @@ object DataSeed {
     }
 
     fun keysOk(context: Context): Boolean {
-        val keys = File(appPath(context), "system/prod.keys")
-        return keys.isFile && keys.length() > 100
+        val a = File(kenjiHome(context), "system/prod.keys")
+        val b = File(appPath(context), "system/prod.keys")
+        return (a.isFile && a.length() > 100) || (b.isFile && b.length() > 100)
     }
 
-    fun firmwareNca(context: Context): Int =
-        countKenji(File(appPath(context), "bis/system/Contents/registered"))
+    fun firmwareNca(context: Context): Int {
+        val n = countKenji(File(kenjiHome(context), "bis/system/Contents/registered"))
+        if (n >= 10) return n
+        return countKenji(File(appPath(context), "bis/system/Contents/registered"))
+    }
 
     fun firmwareSource(context: Context): String =
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(PREF_SRC, "") ?: ""
@@ -99,9 +145,38 @@ object DataSeed {
         }
     }
 
+    private fun pointAppPath(context: Context, dest: File) {
+        val app = appPath(context)
+        if (samePath(app, dest)) return
+        linkDir(File(dest, "bis"), File(app, "bis"))
+        linkDir(File(dest, "system"), File(app, "system"))
+    }
+
+    private fun linkDir(src: File, dest: File) {
+        if (!src.exists()) src.mkdirs()
+        if (samePath(src, dest)) return
+        if (dest.exists() && isShortcut(dest)) return
+        if (dest.exists() && dest.isDirectory) {
+            val kids = dest.listFiles()
+            if (kids != null && kids.isNotEmpty()) return
+            dest.delete()
+        }
+        try {
+            dest.parentFile?.mkdirs()
+            Os.symlink(src.absolutePath, dest.absolutePath)
+        } catch (t: Throwable) {
+            Log.w("KenjiSpace", "dirlink ${dest.name}", t)
+        }
+    }
+
     private fun sources(context: Context): List<File> {
         val sd = Environment.getExternalStorageDirectory()
         val out = ArrayList<File>()
+        edenDir(context)?.let { p ->
+            val f = File(p)
+            if (f.isDirectory) out.add(f)
+        }
+        kenjiHome(context).let { if (it.isDirectory) out.add(it) }
         val rel = arrayOf(
             "Download/ed/Eden/files", "Download/ed/Eden", "Eden/files", "Eden",
             "Switch", "Kenji",
@@ -215,7 +290,7 @@ object DataSeed {
         val n = countKenji(destReg)
         if (n < 10) return false
         remember(context, srcReg.absolutePath, mode, n)
-        writeReport(context, appPath(context))
+        writeReport(context, kenjiHome(context))
         Log.i("KenjiSpace", "fw $mode $n ← ${srcReg.absolutePath}")
         return true
     }

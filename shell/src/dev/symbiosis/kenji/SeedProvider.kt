@@ -19,6 +19,8 @@ class SeedProvider : ContentProvider() {
                 WebWipe.run(ctx)
                 DataSeed.ensure(ctx)
                 SettingsBank.applyDefaultOnce(ctx)
+                val app = ctx.applicationContext
+                if (app is android.app.Application) SpaceHook.install(app)
             }
         } catch (t: Throwable) {
             Log.e("KenjiSpace", "auto-seed", t)

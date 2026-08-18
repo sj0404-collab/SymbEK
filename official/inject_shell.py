@@ -36,6 +36,16 @@ if "dev.symbiosis.kenji.SeedProvider" not in text:
     if idx < 0:
         raise SystemExit("application tag")
     text = text[: idx + 1] + provider + text[idx + 1 :]
-    manifest.write_text(text, encoding="utf-8")
+
+if "dev.symbiosis.kenji.PickActivity" not in text:
+    act = """
+        <activity android:exported="false" android:name="dev.symbiosis.kenji.PickActivity" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
+"""
+    idx = text.rfind("</application>")
+    if idx < 0:
+        raise SystemExit("application close")
+    text = text[:idx] + act + text[idx:]
+
+manifest.write_text(text, encoding="utf-8")
 
 print("injected Kotlin SeedProvider +", "classes4.dex" if DEX and DEX.is_file() else "no dex")

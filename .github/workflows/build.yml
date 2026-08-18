@@ -141,7 +141,7 @@ jobs:
           for i in 1 2 3 4 5; do
             if gh release create latest Kenji-Space.apk \
               --title "Kenji Space ${KENJI_VERSION_NAME}" \
-              --notes "Оригинал Kenji-NX 2.1.0-pr.2 + Kotlin-мосты: ярлыки прошивки без копии, ключи, пресеты QuickSettings. Без HTML/Java-шелла. ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
+              --notes "Оригинал Kenji + панель: Eden/files, папка Kenji для ярлыков, Сохранить, вкладка пресетов, оверлей NCA/ключей над сеткой игр. ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
             then
               exit 0
             fi

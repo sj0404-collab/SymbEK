@@ -40,6 +40,79 @@ object SettingsBank {
         SafePrefs.putBool(p, "enableDocked", docked)
     }
 
+    fun ensureCatalog(c: Context) {
+        val p = named(c)
+        if (SafePrefs.bool(p, "catalog_v1", false)) return
+        val pack = listOf(
+            Triple("скорость 0.5×", 0.5f, false),
+            Triple("баланс 0.75×", 0.75f, false),
+            Triple("оригинал 1×", 1f, false),
+            Triple("чёткость 1.5×", 1.5f, false),
+            Triple("качество 2×", 2f, false),
+            Triple("максимум 3×", 3f, false),
+            Triple("Docked 1×", 1f, true),
+            Triple("Docked 1.5×", 1.5f, true),
+            Triple("экономия 0.5×", 0.5f, false),
+        )
+        val arr = org.json.JSONArray(p.getString("list", "[]"))
+        for ((name, scale, dock) in pack) {
+            val o = snapshot(c)
+            o.put("name", name)
+            o.put("resScale", scale.toDouble())
+            o.put("enableDocked", dock)
+            arr.put(o)
+        }
+        p.edit().putString("list", arr.toString()).putBoolean("catalog_v1", true).commit()
+    }
+
+    fun listNamed(c: Context): List<String> {
+        ensureCatalog(c)
+        val arr = org.json.JSONArray(named(c).getString("list", "[]"))
+        val out = ArrayList<String>()
+        for (i in 0 until arr.length()) {
+            val n = arr.optJSONObject(i)?.optString("name").orEmpty()
+            if (n.isNotEmpty()) out.add(n)
+        }
+        return out
+    }
+
+    fun saveNamed(c: Context, name: String) {
+        val arr = org.json.JSONArray(named(c).getString("list", "[]"))
+        val next = org.json.JSONArray()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (o.optString("name") != name) next.put(o)
+        }
+        next.put(snapshot(c).put("name", name))
+        named(c).edit().putString("list", next.toString()).commit()
+    }
+
+    fun applyNamed(c: Context, name: String): String {
+        val arr = org.json.JSONArray(named(c).getString("list", "[]"))
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (o.optString("name") != name) continue
+            write(
+                c,
+                enablePptc = o.optBoolean("enablePptc", true),
+                useNce = o.optBoolean("useNce", false),
+                enableDocked = o.optBoolean("enableDocked", false),
+                enableLowPowerPptc = o.optBoolean("enableLowPowerPptc", false),
+                enableJitCacheEviction = o.optBoolean("enableJitCacheEviction", false),
+                enableFsIntegrityChecks = o.optBoolean("enableFsIntegrityChecks", false),
+                ignoreMissingServices = o.optBoolean("ignoreMissingServices", false),
+                enableShaderCache = o.optBoolean("enableShaderCache", true),
+                memoryConfiguration = o.optInt("memoryConfiguration", 0),
+                memoryManagerMode = o.optInt("memoryManagerMode", 2),
+                resScale = o.optDouble("resScale", 1.0).toFloat(),
+            )
+            return "включён «$name»"
+        }
+        return "пресета нет"
+    }
+
+    private fun named(c: Context) = c.getSharedPreferences("kenji_presets", Context.MODE_PRIVATE)
+
     fun snapshot(c: Context): JSONObject {
         val p = official(c)
         return JSONObject()
