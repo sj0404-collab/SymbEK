@@ -7,8 +7,8 @@ import android.net.Uri;
 import android.util.Log;
 
 /**
- * Runs before KenjinxApplication. Restores stash and copies Eden firmware
- * into official AppPath so MainActivity does not hang on Loading.
+ * Runs before KenjinxApplication. Restores stash and points bis/ at Eden
+ * nand (or another Kenji bis) via shortcuts — no firmware copy.
  * Never throws into the official process.
  */
 public class SeedProvider extends ContentProvider {

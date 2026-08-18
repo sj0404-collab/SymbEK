@@ -26,6 +26,7 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        SettingsBank.ensureBuiltins(this);
         p = PreferenceManager.getDefaultSharedPreferences(this);
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(LibraryActivity.BG);
@@ -43,6 +44,48 @@ public class SettingsActivity extends Activity {
         heading("Настройки");
         muted("те же ключи, что читает Kenji при запуске игры");
 
+        section("Прошивка");
+        muted(DataSeed.statusLine(this)
+                + "\nKenji читает: " + new java.io.File(DataSeed.appPath(this),
+                "bis/system/Contents/registered").getAbsolutePath()
+                + "\nИсточник: " + (DataSeed.firmwareSource(this).isEmpty()
+                ? "ещё не найден" : DataSeed.firmwareSource(this))
+                + "\nКак: " + (DataSeed.firmwareMode(this).isEmpty()
+                ? "ярлыки, без копии NCA" : DataSeed.firmwareMode(this)));
+        rowBtn("Обновить ярлыки (без копии)", new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                DataSeed.ensure(SettingsActivity.this);
+                toast(extract(DataSeed.bridgeFirmware(SettingsActivity.this)));
+                draw();
+            }
+        });
+
+        section("Графика");
+        muted("масштаб рендера → resScale, который читает официальный Kenji");
+        scaleRow(new double[]{0.5, 0.75, 1.0, 1.5, 2.0, 3.0});
+        try {
+            org.json.JSONArray presets = new org.json.JSONObject(
+                    SettingsBank.listJson(this, "")).optJSONArray("items");
+            if (presets != null) {
+                for (int i = 0; i < presets.length(); i++) {
+                    org.json.JSONObject o = presets.optJSONObject(i);
+                    if (o == null) continue;
+                    final String n = o.optString("name");
+                    double sc = o.optDouble("resScale", 1.0);
+                    boolean dock = o.optBoolean("enableDocked", false);
+                    rowBtn(n + " · " + sc + "×" + (dock ? " docked" : ""),
+                            new View.OnClickListener() {
+                                @Override public void onClick(View v) {
+                                    toast(extract(SettingsBank.apply(SettingsActivity.this, n)));
+                                    draw();
+                                }
+                            });
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        section("Ядро");
         toggle("useNce", "NCE", "на Mali-G57 лучше выкл", false);
         toggle("enablePptc", "PPTC", "кэш профилей", true);
         toggle("enableLowPowerPptc", "Low-Power PPTC", "выкл", false);
@@ -155,6 +198,42 @@ public class SettingsActivity extends Activity {
         lp.topMargin = dp(6);
         body.addView(b, lp);
         return b;
+    }
+
+    private void scaleRow(double[] scales) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        float current = p.getFloat("resScale", 1f);
+        for (final double s : scales) {
+            Button b = new Button(this);
+            b.setText(s + "×");
+            b.setAllCaps(false);
+            b.setTextColor(Math.abs(current - s) < 0.01 ? LibraryActivity.BG : LibraryActivity.TEXT);
+            GradientDrawable d = new GradientDrawable();
+            d.setColor(Math.abs(current - s) < 0.01 ? LibraryActivity.CYAN : LibraryActivity.CARD);
+            d.setCornerRadius(dp(8));
+            b.setBackground(d);
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    toast(extract(SettingsBank.applyScale(SettingsActivity.this, s, false)));
+                    draw();
+                }
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
+            lp.setMargins(dp(2), 0, dp(2), 0);
+            row.addView(b, lp);
+        }
+        body.addView(row);
+    }
+
+    private String extract(String jsonOrText) {
+        if (jsonOrText != null && jsonOrText.startsWith("{")) {
+            try {
+                return new org.json.JSONObject(jsonOrText).optString("message", jsonOrText);
+            } catch (Exception ignored) {
+            }
+        }
+        return jsonOrText == null ? "" : jsonOrText;
     }
 
     private int dp(int v) {

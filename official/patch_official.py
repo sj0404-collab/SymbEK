@@ -8,8 +8,8 @@ import sys
 
 ROOT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
 PKG = "dev.symbiosis.kenji"
-VERSION_CODE = sys.argv[2] if len(sys.argv) > 2 else "1035"
-VERSION_NAME = sys.argv[3] if len(sys.argv) > 3 else "1.0.35"
+VERSION_CODE = sys.argv[2] if len(sys.argv) > 2 else "1036"
+VERSION_NAME = sys.argv[3] if len(sys.argv) > 3 else "1.0.36"
 
 
 manifest = ROOT / "AndroidManifest.xml"
@@ -57,19 +57,19 @@ s = s.replace(">Kenji-NX Optimized<", ">Kenji Space<", 1)
 replacements = [
     (
         "Install Firmware",
-        "Install Firmware (Kenji: bis/.../registered/{id}.nca/00 — not Eden nand/*.nca)",
+        "Install Firmware (optional — Space already points bis/ at Eden nand via shortcuts)",
     ),
     (
         "Install firmware",
-        "Install firmware — Kenji reads bis/system/Contents/registered/{id}.nca/00",
+        "Install firmware — or let Space symlink nand/*.nca → bis/{id}.nca/00",
     ),
     (
         "No firmware installed",
-        "No firmware in bis/. Eden nand/*.nca is not enough. Restore registered.stash → registered.",
+        "No readable firmware in bis/. Space looks at Eden nand and official Kenji bis; it does not copy.",
     ),
     (
         "Firmware",
-        "Firmware (bis/{id}.nca/00)",
+        "Firmware (bis/{id}.nca/00 = ярлык на nand, без копии)",
     ),
     (
         "prod.keys",
@@ -81,7 +81,7 @@ for old, new in replacements:
 if "kenji_space_fw_hint" not in s:
     s = s.replace(
         "</resources>",
-        '    <string name="kenji_space_fw_hint">Kenji не видит Eden nand/*.nca. Нужны system/prod.keys и bis/system/Contents/registered/{id}.nca/00. Если есть registered.stash — переименуйте в registered. Вечный Loading = нет прошивки в bis/.</string>\n</resources>',
+        '    <string name="kenji_space_fw_hint">Прошивка не копируется. Space сканирует Eden nand/ и чужой Kenji bis/, затем кладёт ярлыки {id}.nca/00 → тот же файл. Путь источника: system/firmware_source.txt. Вечный Loading = ярлыки не читаются (нет доступа к Android/data) — укажите общую папку в «Данные».</string>\n</resources>',
         1,
     )
 strings.write_text(s, encoding="utf-8")

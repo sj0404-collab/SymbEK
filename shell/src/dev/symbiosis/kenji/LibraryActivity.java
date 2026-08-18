@@ -76,6 +76,7 @@ public class LibraryActivity extends Activity {
         new Thread(() -> {
             try {
                 DataSeed.ensure(this);
+                SettingsBank.ensureBuiltins(this);
                 if (!getSharedPreferences("kenji_space", MODE_PRIVATE).getBoolean("mali_applied", false)) {
                     SettingsBank.applyDefault(this);
                     getSharedPreferences("kenji_space", MODE_PRIVATE)
@@ -123,6 +124,18 @@ public class LibraryActivity extends Activity {
         title.setTypeface(Typeface.DEFAULT_BOLD);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
         head.addView(title, tp);
+        head.addView(pill("Их дом", false, new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                try {
+                    Intent i = new Intent();
+                    i.setClassName(getPackageName(), "org.kenjinx.android.MainActivity");
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(i);
+                } catch (Exception e) {
+                    toast("их дом не открылся");
+                }
+            }
+        }));
         head.addView(pill("Настройки", false, new View.OnClickListener() {
             @Override public void onClick(View v) {
                 startActivity(new Intent(LibraryActivity.this, SettingsActivity.class));

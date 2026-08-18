@@ -45,7 +45,7 @@ jobs:
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/kenji-release.jks"
           test -s "$RUNNER_TEMP/kenji-release.jks"
 
-      - name: Official Kenji home + silent firmware seed
+      - name: Shelf + official GameHost + firmware shortcuts
         env:
           KENJI_KEYSTORE: ${{ runner.temp }}/kenji-release.jks
           KENJI_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -62,8 +62,7 @@ jobs:
           test -n "$ANDROID_JAR"
           mkdir -p /tmp/shell-cls
           javac --release 17 -encoding UTF-8 -cp "$ANDROID_JAR" -d /tmp/shell-cls \
-            shell/src/dev/symbiosis/kenji/DataSeed.java \
-            shell/src/dev/symbiosis/kenji/SeedProvider.java
+            shell/src/dev/symbiosis/kenji/*.java
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME/build-tools"/* | sort | tail -1)
           mkdir -p /tmp/shell-dex
           find /tmp/shell-cls -name '*.class' > /tmp/shell-cls.txt
@@ -82,6 +81,8 @@ jobs:
           python3 official/patch_official.py /tmp/official-apktool \
             "$KENJI_VERSION_CODE" "$KENJI_VERSION_NAME"
           python3 official/inject_shell.py /tmp/official-apktool /tmp/shell-dex/classes.dex
+          grep -q 'dev.symbiosis.kenji.LibraryActivity' /tmp/official-apktool/AndroidManifest.xml
+          grep -q 'dev.symbiosis.kenji.SeedProvider' /tmp/official-apktool/AndroidManifest.xml
 
           java -jar /tmp/apktool.jar b /tmp/official-apktool -o /tmp/kenji-unsigned.apk
 
@@ -98,7 +99,7 @@ jobs:
           unzip -l Kenji-Space.apk | grep 'classes3.dex'
           unzip -l Kenji-Space.apk | grep 'classes4.dex'
           ! unzip -l Kenji-Space.apk | grep -q 'assets/www/index.html'
-          ! unzip -l Kenji-Space.apk | grep -q 'LibraryActivity'
+          unzip -l Kenji-Space.apk | grep 'classes4.dex'
           test "$(stat -c%s Kenji-Space.apk)" -gt 45000000
 
           echo "MD5=$(md5sum Kenji-Space.apk | cut -d' ' -f1)"
@@ -125,7 +126,7 @@ jobs:
           for i in 1 2 3 4 5; do
             if gh release create latest Kenji-Space.apk \
               --title "Kenji Space ${KENJI_VERSION_NAME}" \
-              --notes "Официальный дом Kenji-NX 2.1.0-pr.2 (как 1.0.25) + автопочинка прошивки: stash/junk → registered, keys/ → system/prod.keys, Eden nand → bis/.../00. Без HTML и без нашего лаунчера. Пакет dev.symbiosis.kenji. Версия ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
+              --notes "Полка с обложками и запуском нажатием. Игра — официальный GameHost 2.1.0-pr.2. Прошивка без копии: ярлыки bis/{id}.nca/00 → Eden nand или чужой Kenji bis. 11 графических пресетов. Источник прошивки виден в статусе и system/firmware_source.txt. Пакет dev.symbiosis.kenji. Версия ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
             then
               exit 0
             fi

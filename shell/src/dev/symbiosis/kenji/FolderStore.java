@@ -142,6 +142,16 @@ public final class FolderStore {
             if (parent != null) out.add(parent.getAbsolutePath());
             out.add(user.getAbsolutePath());
         }
+        File sd = android.os.Environment.getExternalStorageDirectory();
+        String[] rel = {
+                "Download", "Download/Switch", "Download/NSP", "Download/Games",
+                "Switch", "Games", "NSP", "XCI", "roms/switch", "Kenji/games",
+                "Android/data/org.kenjinx.android/files/games"
+        };
+        for (String r : rel) {
+            File f = new File(sd, r);
+            if (f.isDirectory()) out.add(f.getAbsolutePath());
+        }
         return out;
     }
 

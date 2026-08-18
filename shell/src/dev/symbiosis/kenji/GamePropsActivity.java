@@ -36,6 +36,7 @@ public class GamePropsActivity extends Activity {
         if (titleId == null || titleId.isEmpty()) {
             titleId = GameShelf.titleId(path, title);
         }
+        SettingsBank.ensureBuiltins(this);
         setContentView(build());
         fill();
     }

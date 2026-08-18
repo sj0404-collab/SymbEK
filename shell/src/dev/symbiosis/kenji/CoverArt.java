@@ -48,8 +48,11 @@ public final class CoverArt {
             copy(found, cache);
             return BitmapFactory.decodeFile(found.getAbsolutePath());
         }
-        // Do not decrypt NSP in the library process: a 12 MB NCA + AES on a
-        // small heap kills the whole launcher. Icons come from sidecar/cache.
+        byte[] jpeg = extractNsp(context, game.path);
+        if (jpeg != null && jpeg.length > 64) {
+            write(cache, jpeg);
+            return BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
+        }
         return null;
     }
 
@@ -88,9 +91,17 @@ public final class CoverArt {
                 "cache/game_list/" + tid + ".png",
                 "cache/game_list/" + tidU + ".png",
                 "cache/game_list/" + tid + ".jpg",
+                "cache/game_list/" + tidU + ".jpg",
+                "cache/" + tid + ".png",
+                "cache/" + tidU + ".jpg",
+                "cache/icons/" + tid + ".png",
+                "cache/icons/" + tidU + ".jpg",
                 "games/" + tidU + "/icon.jpg",
                 "games/" + tidU + "/icon.png",
-                "nand/cache/" + tid + ".png"
+                "games/" + tid + "/icon.jpg",
+                "nand/cache/" + tid + ".png",
+                "icons/" + tid + ".png",
+                "icons/" + tidU + ".jpg"
         };
         for (File root : roots) {
             if (root == null) continue;

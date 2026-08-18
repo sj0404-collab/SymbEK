@@ -72,15 +72,76 @@ public final class SettingsBank {
 
     public static String applyDefault(Context c) {
         try {
+            ensureBuiltins(c);
             JSONObject d = maliDefault();
             writeOfficial(c, d);
             save(c, "по умолчанию", "", true);
             return new JSONObject()
                     .put("ok", true)
-                    .put("message", "по умолчанию: NCE выкл, PPTC вкл, DRAM 4 ГиБ, Host Unchecked")
+                    .put("message", "по умолчанию: NCE выкл, PPTC вкл, DRAM 4 ГиБ, Host Unchecked, 1×")
                     .toString();
         } catch (Exception e) {
             return "{\"ok\":false}";
+        }
+    }
+
+    /** Built-in graphics presets — written once, then listed like user ones. */
+    public static void ensureBuiltins(Context c) {
+        SharedPreferences p = named(c);
+        if (p.getBoolean("builtins_v3", false)) return;
+        try {
+            String[][] pack = new String[][]{
+                    {"по умолчанию", "1.0", "0", "false"},
+                    {"скорость 0.5×", "0.5", "0", "false"},
+                    {"баланс 0.75×", "0.75", "0", "false"},
+                    {"оригинал 1×", "1.0", "0", "false"},
+                    {"чёткость 1.5×", "1.5", "0", "false"},
+                    {"качество 2×", "2.0", "0", "false"},
+                    {"максимум 3×", "3.0", "0", "false"},
+                    {"Docked 1×", "1.0", "0", "true"},
+                    {"Docked 1.5×", "1.5", "0", "true"},
+                    {"Docked 2×", "2.0", "0", "true"},
+                    {"экономия", "0.5", "0", "false"},
+            };
+            JSONArray arr = new JSONArray(p.getString("global", "[]"));
+            for (String[] row : pack) {
+                JSONObject o = maliDefault();
+                o.put("name", row[0]);
+                o.put("scope", "all");
+                o.put("titleId", "");
+                o.put("resScale", Double.parseDouble(row[1]));
+                o.put("memoryConfiguration", Integer.parseInt(row[2]));
+                o.put("enableDocked", Boolean.parseBoolean(row[3]));
+                if ("экономия".equals(row[0])) {
+                    o.put("enableLowPowerPptc", true);
+                    o.put("enableShaderCache", true);
+                }
+                JSONArray next = new JSONArray();
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject cur = arr.optJSONObject(i);
+                    if (cur != null && row[0].equals(cur.optString("name"))) continue;
+                    if (cur != null) next.put(cur);
+                }
+                next.put(o);
+                arr = next;
+            }
+            p.edit().putString("global", arr.toString()).putBoolean("builtins_v3", true).commit();
+        } catch (Exception ignored) {
+        }
+    }
+
+    public static String applyScale(Context c, double scale, boolean docked) {
+        official(c).edit()
+                .putFloat("resScale", (float) scale)
+                .putBoolean("enableDocked", docked)
+                .commit();
+        try {
+            return new JSONObject()
+                    .put("ok", true)
+                    .put("message", (docked ? "Docked " : "Handheld ") + scale + "×")
+                    .toString();
+        } catch (Exception e) {
+            return "{\"ok\":true}";
         }
     }
 
@@ -140,6 +201,7 @@ public final class SettingsBank {
                 .put("ignoreMissingServices", false)
                 .put("memoryConfiguration", 0) // 4GiB
                 .put("memoryManagerMode", 2)   // HostMappedUnsafe
+                .put("enableShaderCache", true)
                 .put("resScale", 1.0);
     }
 
@@ -155,6 +217,7 @@ public final class SettingsBank {
                 .put("ignoreMissingServices", p.getBoolean("ignoreMissingServices", false))
                 .put("memoryConfiguration", p.getInt("memoryConfiguration", 0))
                 .put("memoryManagerMode", p.getInt("memoryManagerMode", 2))
+                .put("enableShaderCache", p.getBoolean("enableShaderCache", true))
                 .put("resScale", (double) p.getFloat("resScale", 1f));
     }
 
