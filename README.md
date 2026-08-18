@@ -1,17 +1,11 @@
 # Kenji Space
 
-Официальный Kenji-NX **2.1.0-pr.2** только как **GameHost** (DEX + `.so`). Иконка открывает нативную полку: обложки, запуск нажатием, пресеты. Их Compose-дом больше не открывается — это и был вечный Loading без прошивки.
+Оригинальный **Kenji-NX 2.1.0-pr.2** (их дом, GameHost, DEX, `.so`).
 
-Нет HTML, нет React, нет WebView. Настройки — нативный экран (не их Compose). Кэш WebView чистится при старте. На полке видна версия APK.
+Поверх — только Kotlin:
 
-Пакет `dev.symbiosis.kenji`.
+- `SeedProvider` до их `Application`: ключи, ярлыки прошивки, пресеты
+- прошивка **не копируется**: `nand/*.nca` → `bis/.../{id}.nca/00` (symlink/hardlink)
+- настройки пишутся в их QuickSettings (`resScale`, NCE, PPTC, DRAM…)
 
-## Прошивка без копии
-
-`SeedProvider` и кнопка «Данные» сканируют диск и **не копируют** NCA:
-
-- `prod.keys` / `keys/prod.keys` → `system/prod.keys`
-- Eden `nand/*.nca` → ярлык `bis/.../registered/{id}.nca/00`
-- чужой Kenji `bis/` → тот же ярлык
-
-Если статус «нет ключей / нет прошивки» — нажмите розовый баннер или «Данные» и укажите папку Eden/Kenji, где лежат `prod.keys` и `nand/` или `bis/`.
+Пакет `dev.symbiosis.kenji`. Нет HTML, нет React, нет Java-шелла, нет WebView-UI.

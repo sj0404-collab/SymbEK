@@ -4,10 +4,9 @@ build/
 local.properties
 *.iml
 .cxx/
-app/src/main/jniLibs/
-app/build/
 *.apk
 .DS_Store
-# Ключ подписи живёт в секретах репозитория, не в git.
 *.jks
 *.keystore
+*.class
+.kotlin/

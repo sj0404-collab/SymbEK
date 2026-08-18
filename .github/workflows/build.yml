@@ -45,7 +45,7 @@ jobs:
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/kenji-release.jks"
           test -s "$RUNNER_TEMP/kenji-release.jks"
 
-      - name: Shelf + official GameHost + firmware shortcuts
+      - name: Official Kenji + Kotlin bridges
         env:
           KENJI_KEYSTORE: ${{ runner.temp }}/kenji-release.jks
           KENJI_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -60,13 +60,25 @@ jobs:
 
           ANDROID_JAR=$(find "$ANDROID_HOME/platforms" -name android.jar | sort | tail -1)
           test -n "$ANDROID_JAR"
+
+          curl -fL --retry 3 -o /tmp/kotlin-compiler.zip \
+            https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
+          unzip -q /tmp/kotlin-compiler.zip -d /tmp
+          KOTLINC=/tmp/kotlinc/bin/kotlinc
+          STDLIB=/tmp/kotlinc/lib/kotlin-stdlib.jar
+          test -x "$KOTLINC"
+          test -f "$STDLIB"
+
           mkdir -p /tmp/shell-cls
-          javac --release 17 -encoding UTF-8 -cp "$ANDROID_JAR" -d /tmp/shell-cls \
-            shell/src/dev/symbiosis/kenji/*.java
+          "$KOTLINC" -jvm-target 17 -classpath "$ANDROID_JAR" -d /tmp/shell-cls \
+            shell/src/dev/symbiosis/kenji/*.kt
+          test -n "$(find /tmp/shell-cls -name '*.class' | head -1)"
+
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME/build-tools"/* | sort | tail -1)
           mkdir -p /tmp/shell-dex
-          find /tmp/shell-cls -name '*.class' > /tmp/shell-cls.txt
-          "$BUILD_TOOLS/d8" --min-api 29 --output /tmp/shell-dex $(cat /tmp/shell-cls.txt)
+          "$BUILD_TOOLS/d8" --min-api 29 --lib "$ANDROID_JAR" --output /tmp/shell-dex \
+            $(find /tmp/shell-cls -name '*.class') \
+            "$STDLIB"
           test -f /tmp/shell-dex/classes.dex
 
           OFFICIAL=https://git.ryujinx.app/Kenji-NX/Android/releases/download/2.1.0-pr.2/kenji-nx-v2.1.0-pr.2-standard.apk
@@ -81,8 +93,9 @@ jobs:
           python3 official/patch_official.py /tmp/official-apktool \
             "$KENJI_VERSION_CODE" "$KENJI_VERSION_NAME"
           python3 official/inject_shell.py /tmp/official-apktool /tmp/shell-dex/classes.dex
-          grep -q 'dev.symbiosis.kenji.LibraryActivity' /tmp/official-apktool/AndroidManifest.xml
           grep -q 'dev.symbiosis.kenji.SeedProvider' /tmp/official-apktool/AndroidManifest.xml
+          grep -q 'org.kenjinx.android.MainActivity' /tmp/official-apktool/AndroidManifest.xml
+          ! grep -q 'LibraryActivity' /tmp/official-apktool/AndroidManifest.xml
 
           java -jar /tmp/apktool.jar b /tmp/official-apktool -o /tmp/kenji-unsigned.apk
 
@@ -98,9 +111,8 @@ jobs:
           unzip -l Kenji-Space.apk | grep -E 'lib/arm64-v8a/lib(kenjinx|kenjinxjni|avcodec|skiasharp)\.so'
           unzip -l Kenji-Space.apk | grep 'classes3.dex'
           unzip -l Kenji-Space.apk | grep 'classes4.dex'
-          if unzip -l Kenji-Space.apk | grep -qiE '\.(html|htm|jsx|tsx)$|assets/www/'; then
-            echo "::error::в APK остался HTML/React"
-            unzip -l Kenji-Space.apk | grep -iE '\.(html|htm|jsx|tsx)$|assets/www/' || true
+          if unzip -l Kenji-Space.apk | grep -qiE '\.(html|htm|jsx)$|assets/www/'; then
+            echo "::error::HTML leftover"
             exit 1
           fi
           test "$(stat -c%s Kenji-Space.apk)" -gt 45000000
@@ -129,7 +141,7 @@ jobs:
           for i in 1 2 3 4 5; do
             if gh release create latest Kenji-Space.apk \
               --title "Kenji Space ${KENJI_VERSION_NAME}" \
-              --notes "Натив. Настройки больше не падают (чужой тип resScale). WebView-кэш чистится при старте. Версия на полке. Без HTML. ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
+              --notes "Оригинал Kenji-NX 2.1.0-pr.2 + Kotlin-мосты: ярлыки прошивки без копии, ключи, пресеты QuickSettings. Без HTML/Java-шелла. ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
             then
               exit 0
             fi
