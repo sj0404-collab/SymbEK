@@ -570,6 +570,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         private var sx = 0f
         private var sy = 0f
         private var hold = false
+        private var grid = false
+        private var moved = false
         private var posted: Runnable? = null
         private val slop = 28f * host.resources.displayMetrics.density
 
