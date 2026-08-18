@@ -141,7 +141,7 @@ jobs:
           for i in 1 2 3 4 5; do
             if gh release create latest Kenji-Space.apk \
               --title "Kenji Space ${KENJI_VERSION_NAME}" \
-              --notes "Оригинал Kenji + панель: Eden/files, папка Kenji для ярлыков, Сохранить, вкладка пресетов, оверлей NCA/ключей над сеткой игр. ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
+              --notes "Пустая /sdcard/Kenji больше не подменяет Android/data bis. GameHost всегда читает files/. Выбранная Kenji — только зеркало ярлыков. ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
             then
               exit 0
             fi

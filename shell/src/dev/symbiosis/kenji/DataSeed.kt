@@ -24,16 +24,18 @@ object DataSeed {
     fun appPath(context: Context): File =
         context.getExternalFilesDir(null) ?: context.filesDir
 
-    fun kenjiHome(context: Context): File {
+    /** What official GameHost actually reads. Never the empty /sdcard/Kenji. */
+    fun playHome(context: Context): File = appPath(context)
+
+    fun userKenjiDir(context: Context): File? {
         val p = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(PREF_KENJI, "")
-        if (!p.isNullOrBlank()) {
-            val f = File(p)
-            if (f.isDirectory || f.mkdirs()) return f
-        }
-        val guess = File(Environment.getExternalStorageDirectory(), "Kenji")
-        if (guess.isDirectory) return guess
-        return appPath(context)
+        if (p.isNullOrBlank()) return null
+        val f = File(p)
+        return if (f.isDirectory || f.mkdirs()) f else null
     }
+
+    /** Visible Kenji folder for shortcuts, or playHome if none. */
+    fun kenjiHome(context: Context): File = userKenjiDir(context) ?: playHome(context)
 
     fun edenDir(context: Context): String? {
         val p = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(PREF_EDEN, "")
@@ -63,8 +65,8 @@ object DataSeed {
     }
 
     private fun ensureInner(context: Context) {
-        val dest = kenjiHome(context)
-        pointAppPath(context, dest)
+        val dest = playHome(context)
+        repairAppPath(context)
         restoreOrphanStash(dest)
         val destKeys = File(dest, "system/prod.keys")
         for (src in sources(context)) {
@@ -74,48 +76,47 @@ object DataSeed {
         harvestLooseKeys(destKeys)
 
         val destReg = File(dest, "bis/system/Contents/registered")
+        if (countKenji(destReg) < 10) {
+            edenDir(context)?.let { eden ->
+                val root = File(eden)
+                val registered = File(root, "nand/system/Contents/registered")
+                val nand = File(root, "nand")
+                when {
+                    countAnyNca(registered) >= 10 -> bridgeFirmware(context, registered, destReg)
+                    countAnyNca(nand) >= 10 -> bridgeFirmware(context, nand, destReg)
+                }
+            }
+        }
+        if (countKenji(destReg) < 10) {
+            for (src in sources(context)) {
+                val kenji = File(src, "bis/system/Contents/registered")
+                val stash = File(src, "bis/system/Contents/registered.stash")
+                val eden = File(src, "nand/system/Contents/registered")
+                val nand = File(src, "nand")
+                when {
+                    countKenji(kenji) >= 10 && !samePath(kenji, destReg) &&
+                        bridgeFirmware(context, kenji, destReg) -> break
+                    countKenji(stash) >= 10 && bridgeFirmware(context, stash, destReg) -> break
+                    countAnyNca(eden) >= 10 && bridgeFirmware(context, eden, destReg) -> break
+                    countAnyNca(nand) >= 10 && countAnyNca(eden) < 10 &&
+                        bridgeFirmware(context, nand, destReg) -> break
+                }
+            }
+        }
         if (countKenji(destReg) >= 10) {
             remember(context, destReg.absolutePath, modeOf(destReg), countKenji(destReg))
-            writeReport(context, dest)
-            return
         }
-        edenDir(context)?.let { eden ->
-            val root = File(eden)
-            val registered = File(root, "nand/system/Contents/registered")
-            val nand = File(root, "nand")
-            when {
-                countAnyNca(registered) >= 10 && bridgeFirmware(context, registered, destReg) -> return
-                countAnyNca(nand) >= 10 && bridgeFirmware(context, nand, destReg) -> return
-            }
-        }
-        for (src in sources(context)) {
-            val kenji = File(src, "bis/system/Contents/registered")
-            val stash = File(src, "bis/system/Contents/registered.stash")
-            val eden = File(src, "nand/system/Contents/registered")
-            val nand = File(src, "nand")
-            when {
-                countKenji(kenji) >= 10 && !samePath(kenji, destReg) &&
-                    bridgeFirmware(context, kenji, destReg) -> return
-                countKenji(stash) >= 10 && bridgeFirmware(context, stash, destReg) -> return
-                countAnyNca(eden) >= 10 && bridgeFirmware(context, eden, destReg) -> return
-                countAnyNca(nand) >= 10 && countAnyNca(eden) < 10 &&
-                    bridgeFirmware(context, nand, destReg) -> return
-            }
-        }
+        mirrorToUserKenji(context, dest)
         writeReport(context, dest)
     }
 
     fun keysOk(context: Context): Boolean {
-        val a = File(kenjiHome(context), "system/prod.keys")
-        val b = File(appPath(context), "system/prod.keys")
-        return (a.isFile && a.length() > 100) || (b.isFile && b.length() > 100)
+        val a = File(playHome(context), "system/prod.keys")
+        return a.isFile && a.length() > 100
     }
 
-    fun firmwareNca(context: Context): Int {
-        val n = countKenji(File(kenjiHome(context), "bis/system/Contents/registered"))
-        if (n >= 10) return n
-        return countKenji(File(appPath(context), "bis/system/Contents/registered"))
-    }
+    fun firmwareNca(context: Context): Int =
+        countKenji(File(playHome(context), "bis/system/Contents/registered"))
 
     fun firmwareSource(context: Context): String =
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(PREF_SRC, "") ?: ""
@@ -172,11 +173,12 @@ object DataSeed {
     private fun sources(context: Context): List<File> {
         val sd = Environment.getExternalStorageDirectory()
         val out = ArrayList<File>()
+        out.add(playHome(context))
         edenDir(context)?.let { p ->
             val f = File(p)
             if (f.isDirectory) out.add(f)
         }
-        kenjiHome(context).let { if (it.isDirectory) out.add(it) }
+        userKenjiDir(context)?.let { if (countKenji(File(it, "bis/system/Contents/registered")) >= 10) out.add(it) }
         val rel = arrayOf(
             "Download/ed/Eden/files", "Download/ed/Eden", "Eden/files", "Eden",
             "Switch", "Kenji",

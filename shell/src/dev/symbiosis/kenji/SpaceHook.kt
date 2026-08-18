@@ -126,14 +126,14 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
 
         fun refresh() {
-            val keys = if (DataSeed.keysOk(host)) {
-                val f = java.io.File(DataSeed.kenjiHome(host), "system/prod.keys")
-                "ключи ${f.length() / 1024} КБ"
-            } else "нет ключей"
+            val play = DataSeed.playHome(host)
+            val keysFile = java.io.File(play, "system/prod.keys")
+            val keys = if (keysFile.isFile && keysFile.length() > 100) "ключи ${keysFile.length() / 1024} КБ" else "нет ключей"
             val nca = DataSeed.firmwareNca(host)
             val fw = if (nca >= 10) "$nca NCA · ${DataSeed.firmwareMode(host)}" else "нет прошивки"
             val src = DataSeed.firmwareSource(host).ifEmpty { "источник не выбран" }
-            status.text = "$keys · $fw\nEden: ${DataSeed.edenDir(host) ?: "авто"}\nKenji: ${DataSeed.kenjiHome(host).absolutePath}\n$src"
+            val mirror = DataSeed.userKenjiDir(host)?.absolutePath ?: "нет (только Android/data)"
+            status.text = "$keys · $fw\nKenji читает: ${play.absolutePath}\nЗеркало ярлыков: $mirror\nEden: ${DataSeed.edenDir(host) ?: "авто"}\n$src"
             fillPresets()
         }
 
