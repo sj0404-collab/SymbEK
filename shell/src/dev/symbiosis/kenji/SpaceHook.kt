@@ -60,6 +60,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     fun isPlaying(): Boolean = playing
+    fun waitingForGame(): Boolean = waitGame && !playing
 
     fun inGame(ctx: Context): Boolean {
         val act = ctx as? Activity ?: return false
@@ -103,27 +104,25 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             waitGame = false
             return false
         }
+        if (looksLikeSettings(content) || looksLikeSettings(activity.window?.decorView)) {
+            if (waitGame) BootLog.add("настройки — индикатор снят")
+            waitGame = false
+            return false
+        }
         if (hasGameSurface(content) || hasGameSurface(activity.window?.decorView)) {
             playing = true
             waitGame = false
             return false
         }
-        if (waitGame) {
-            // Library stays under the official Compose dialog — never drop
-            // waitGame just because Search / our panel are still in the tree.
-            val age = android.os.SystemClock.elapsedRealtime() - tappedAt
-            if (age > 120_000L && !officialGameDialog() && looksLikeLibrary(content)) {
-                waitGame = false
-                return false
-            }
-            return true
+        // Only an explicit cover tap sets waitGame. Never infer it from
+        // ProgressBar / extra Compose windows (settings, about, dialogs).
+        if (!waitGame) return false
+        val age = android.os.SystemClock.elapsedRealtime() - tappedAt
+        if (age > 90_000L) {
+            waitGame = false
+            return false
         }
-        val title = scrapeLoadingTitle()
-        if ((title != null && looksGameLoad(title)) || officialGameDialog()) {
-            waitGame = true
-            return true
-        }
-        return false
+        return true
     }
 
     private fun looksGameLoad(title: String): Boolean {
@@ -144,13 +143,13 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     private fun officialGameDialog(): Boolean {
-        if (playing) return false
+        if (playing || !waitGame) return false
         for (root in allWindows()) {
             if (ours(root) || isOurDialog(root)) continue
             if (hasGameSurface(root)) continue
+            if (looksLikeSettings(root)) continue
             if (findOfficialLoader(root, 0)) return true
             if (isKenjiLoadWindow(root)) return true
-            if (isExtraDialogWindow(root)) return true
         }
         return false
     }
@@ -207,13 +206,65 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
 
     private fun looksLikeLibrary(root: View?): Boolean {
         if (root == null) return false
-        // Do not match our own panel text ("Kenji Space") — that made the
-        // activity look like the shelf while Loading BLADE CHIMERA was up.
-        return findText(root, "Search")
+        if (looksLikeSettings(root)) return false
+        return hasLabel(root, "Search")
+    }
+
+    private fun looksLikeSettings(root: View?): Boolean {
+        if (root == null) return false
+        return hasLabel(
+            root,
+            "Quick settings",
+            "Reload firmware",
+            "Install keys",
+            "Install firmware",
+            "Open data folder",
+            "Установить ключи",
+            "Установить прошивку",
+        )
+    }
+
+    private fun hasLabel(root: View, vararg needles: String): Boolean {
+        for (n in needles) if (findText(root, n)) return true
+        val blob = a11yBlob(root)
+        if (blob.isEmpty()) return false
+        val low = blob.lowercase()
+        for (n in needles) if (low.contains(n.lowercase())) return true
+        return false
+    }
+
+    private fun a11yBlob(root: View): String {
+        return try {
+            val info = root.createAccessibilityNodeInfo() ?: return ""
+            val out = StringBuilder(256)
+            fun walk(n: android.view.accessibility.AccessibilityNodeInfo, depth: Int) {
+                if (depth > 12) return
+                n.text?.let { out.append(it).append('\n') }
+                n.contentDescription?.let { out.append(it).append('\n') }
+                n.hintText?.let { out.append(it).append('\n') }
+                val count = n.childCount
+                var i = 0
+                while (i < count && i < 40) {
+                    val c = n.getChild(i)
+                    if (c != null) {
+                        walk(c, depth + 1)
+                        c.recycle()
+                    }
+                    i++
+                }
+            }
+            walk(info, 0)
+            info.recycle()
+            out.toString()
+        } catch (_: Throwable) {
+            ""
+        }
     }
 
     private fun findText(v: View, needle: String): Boolean {
         if (v is TextView && v.text?.toString()?.contains(needle, ignoreCase = true) == true) return true
+        val cd = v.contentDescription?.toString().orEmpty()
+        if (cd.contains(needle, ignoreCase = true)) return true
         if (v is ViewGroup) {
             for (i in 0 until v.childCount) {
                 if (findText(v.getChildAt(i), needle)) return true
@@ -559,6 +610,9 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
 
     private fun beginGameLoad(activity: Activity, name: String = "загрузка игры") {
         if (playing || inGame(activity)) return
+        val content = activity.findViewById<ViewGroup>(android.R.id.content)
+        val decor = activity.window?.decorView
+        if (looksLikeSettings(content) || looksLikeSettings(decor)) return
         waitGame = true
         tappedAt = android.os.SystemClock.elapsedRealtime()
         BootLog.add("тап по обложке → наш индикатор")
@@ -573,6 +627,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     private fun onGameGrid(activity: Activity, ev: MotionEvent): Boolean {
         if (onOurChrome(activity, ev)) return false
         val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return false
+        val decor = activity.window?.decorView
+        if (looksLikeSettings(content) || looksLikeSettings(decor)) return false
         val h = content.height
         if (h <= 0) return false
         val panel = content.findViewWithTag<View>(TAG)

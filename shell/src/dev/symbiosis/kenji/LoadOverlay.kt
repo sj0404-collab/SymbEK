@@ -17,7 +17,7 @@ object LoadOverlay {
     @Volatile private var lastBury = 0L
 
     fun show(activity: Activity, title: String) {
-        if (SpaceHook.isPlaying()) {
+        if (SpaceHook.isPlaying() || !SpaceHook.waitingForGame()) {
             hide(activity)
             return
         }
