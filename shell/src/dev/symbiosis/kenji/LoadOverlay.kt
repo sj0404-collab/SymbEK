@@ -13,6 +13,10 @@ object LoadOverlay {
     private var host: Activity? = null
 
     fun show(activity: Activity, title: String) {
+        if (SpaceHook.isPlaying()) {
+            hide(activity)
+            return
+        }
         host = activity
         val existing = bar
         val view = if (existing != null && existing.context === activity) {
@@ -102,6 +106,9 @@ object LoadOverlay {
                 if (root === bar || root === activity.window?.decorView) continue
                 if (SpaceHook.isSpaceView(root)) continue
                 if (SpaceHook.isLibraryWindow(root)) continue
+                val dm = root.resources.displayMetrics
+                val full = root.width >= dm.widthPixels * 8 / 10 && root.height >= dm.heightPixels * 7 / 10
+                if (full) continue
                 try {
                     val lp = root.layoutParams
                     if (lp is WindowManager.LayoutParams && lp.alpha != 0f) {

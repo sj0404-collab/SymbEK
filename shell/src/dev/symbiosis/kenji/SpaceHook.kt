@@ -47,6 +47,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     @Volatile private var installed = false
     @Volatile private var seeded = false
     @Volatile private var waitGame = false
+    @Volatile private var playing = false
     @Volatile private var tappedAt = 0L
     private val main = Handler(Looper.getMainLooper())
 
@@ -56,6 +57,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         app.registerActivityLifecycleCallbacks(this)
         BootLog.add("SpaceHook: колбэки активности")
     }
+
+    fun isPlaying(): Boolean = playing
 
     fun inGame(ctx: Context): Boolean {
         val act = ctx as? Activity ?: return false
@@ -93,7 +96,12 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     private fun launching(activity: Activity, content: ViewGroup): Boolean {
-        if (hasGameSurface(content) && !officialGameDialog()) {
+        if (playing) {
+            waitGame = false
+            return false
+        }
+        if (hasGameSurface(content)) {
+            playing = true
             waitGame = false
             return false
         }
@@ -104,7 +112,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
         if (waitGame && looksLikeLibrary(content) && !officialGameDialog()) {
             val age = android.os.SystemClock.elapsedRealtime() - tappedAt
-            if (age > 12_000L) {
+            if (age > 8_000L) {
                 waitGame = false
                 return false
             }
@@ -130,6 +138,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     private fun officialGameDialog(): Boolean {
+        if (playing) return false
         for (root in allWindows()) {
             if (ours(root) || isOurDialog(root)) continue
             if (looksLikeLibrary(root)) continue
@@ -308,6 +317,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     override fun onActivityCreated(a: Activity, b: Bundle?) {
         if (a.javaClass.name == "org.kenjinx.android.MainActivity") {
             waitGame = false
+            playing = false
             BootLog.add("MainActivity.onCreate")
         }
     }
@@ -410,23 +420,26 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
 
     private fun applyMode(activity: Activity) {
         val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
-        val game = inGame(activity)
-        val official = officialGameDialog()
-        val busy = launching(activity, content) || official
-        DataSeed.allowEnsure = !game || official
+        val game = inGame(activity) || playing
+        if (looksLikeLibrary(content) && !hasGameSurface(content) && !waitGame) {
+            playing = false
+        }
+        val official = !playing && officialGameDialog()
+        val busy = !playing && launching(activity, content)
+        DataSeed.allowEnsure = !game
         val panel = content.findViewWithTag<View>(TAG) as? Panel
         val hud = content.findViewWithTag<View>(TAG_HUD) as? PlayHud
         val load = content.findViewWithTag<View>(TAG_LOAD)
-        if (game && !official) {
+        if (game) {
+            playing = true
+            waitGame = false
             panel?.collapse()
             panel?.visibility = View.GONE
             load?.visibility = View.GONE
             stripInjected()
             hud?.visibility = View.VISIBLE
             hud?.start()
-            LoadOverlay.buryKenji(activity)
             unshiftOfficial(content, panel)
-            hideOfficialBottomHud(content)
         } else if (busy) {
             waitGame = true
             panel?.collapse()
@@ -516,6 +529,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     private fun beginGameLoad(activity: Activity, name: String = "загрузка игры") {
+        if (playing || inGame(activity)) return
         waitGame = true
         tappedAt = android.os.SystemClock.elapsedRealtime()
         BootLog.add("тап по обложке → наш индикатор")
@@ -603,7 +617,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                         hold = false
                         return true
                     }
-                    val go = ev.actionMasked == MotionEvent.ACTION_UP && grid && !moved && !inGame(host)
+                    val go = ev.actionMasked == MotionEvent.ACTION_UP && grid && !moved &&
+                        !inGame(host) && !playing
                     val handled = base.dispatchTouchEvent(ev)
                     if (go) beginGameLoad(host)
                     return handled
@@ -1127,7 +1142,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             addView(stats, slp)
 
             fab = TextView(host)
-            fab.text = "◈"
+            fab.text = "⚙"
             fab.gravity = Gravity.CENTER
             fab.setTextColor(Color.BLACK)
             fab.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
@@ -1279,6 +1294,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
 
         fun start() {
+            playing = true
+            waitGame = false
             if (running) return
             running = true
             frames = 0
