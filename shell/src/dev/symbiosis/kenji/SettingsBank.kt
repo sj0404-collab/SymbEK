@@ -8,15 +8,34 @@ import org.json.JSONObject
  * Writes official Kenji QuickSettings (same default SharedPreferences their UI reads).
  */
 object SettingsBank {
+    private const val OVERLAY = "overlay_on"
+    private const val JOURNAL = "journal_on"
+
     private fun space(c: Context) = c.getSharedPreferences("kenji_space", Context.MODE_PRIVATE)
     private fun official(c: Context) = PreferenceManager.getDefaultSharedPreferences(c)
 
+    fun overlayOn(c: Context): Boolean = SafePrefs.bool(space(c), OVERLAY, true)
+    fun setOverlay(c: Context, on: Boolean) {
+        SafePrefs.putBool(space(c), OVERLAY, on)
+    }
+
+    fun journalOn(c: Context): Boolean = SafePrefs.bool(space(c), JOURNAL, false)
+    fun setJournal(c: Context, on: Boolean) {
+        SafePrefs.putBool(space(c), JOURNAL, on)
+    }
+
+    fun scaleOf(c: Context): Float = SafePrefs.dec(official(c), "resScale", 1f)
+    fun dockedOf(c: Context): Boolean = SafePrefs.bool(official(c), "enableDocked", false)
+    fun pptcOf(c: Context): Boolean = SafePrefs.bool(official(c), "enablePptc", true)
+    fun nceOf(c: Context): Boolean = SafePrefs.bool(official(c), "useNce", false)
+
     fun enableFps(c: Context) {
+        // Official HUD stays off — we draw a small red overlay instead.
         val p = official(c)
         listOf(
             "showFps", "enableFps", "enableFpsCounter", "showFpsCounter",
             "enableStatistics", "showHud", "enableHud", "enableOverlay",
-        ).forEach { SafePrefs.putBool(p, it, true) }
+        ).forEach { SafePrefs.putBool(p, it, false) }
     }
 
     fun applyDefaultOnce(c: Context) {
