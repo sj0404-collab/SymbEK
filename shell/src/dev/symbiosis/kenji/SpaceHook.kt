@@ -29,7 +29,7 @@ import java.io.File
 
 /**
  * Launcher: compact panel + add-folder inside it.
- * Loading: static gray bar, no animation.
+ * Loading: only our live bar; official Kenji dialog is hidden.
  * In-game: hideable FAB, red stats, bottom overlay (pause, not stop).
  */
 object SpaceHook : Application.ActivityLifecycleCallbacks {
@@ -45,6 +45,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
 
     @Volatile private var installed = false
     @Volatile private var seeded = false
+    @Volatile private var waitGame = false
     private val main = Handler(Looper.getMainLooper())
 
     fun install(app: Application) {
@@ -90,10 +91,103 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     private fun launching(activity: Activity, content: ViewGroup): Boolean {
-        if (!activity.hasWindowFocus()) return true
-        if (loadingTitle(content) != null) return true
-        if (loadingTitle(activity.window?.decorView) != null) return true
+        if (hasGameSurface(content)) {
+            waitGame = false
+            return false
+        }
+        if (!activity.hasWindowFocus()) waitGame = true
+        if (loadingTitle(content) != null) waitGame = true
+        if (loadingTitle(activity.window?.decorView) != null) waitGame = true
+        if (officialLoaderVisible()) waitGame = true
+        return waitGame
+    }
+
+    private fun officialLoaderVisible(): Boolean {
+        for (root in allWindows()) {
+            if (ours(root)) continue
+            if (findOfficialLoader(root, 0)) return true
+        }
         return false
+    }
+
+    private fun findOfficialLoader(v: View, depth: Int): Boolean {
+        if (depth > 14 || ours(v)) return false
+        if (looksOfficialLoader(v)) return true
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) {
+                if (findOfficialLoader(v.getChildAt(i), depth + 1)) return true
+            }
+        }
+        return false
+    }
+
+    private fun looksOfficialLoader(v: View): Boolean {
+        val n = v.javaClass.name
+        if (n.contains("ProgressBar") || n.contains("CircularProgress") ||
+            n.contains("LinearProgress") || n.contains("LoadingIndicator")
+        ) return true
+        if (v is TextView) {
+            val t = v.text?.toString().orEmpty()
+            if (t.contains("Loading", true) || t.contains("Загрузка")) return true
+        }
+        return false
+    }
+
+    private fun ours(v: View): Boolean {
+        var p: View? = v
+        repeat(12) {
+            val cur = p ?: return false
+            val t = cur.tag
+            if (t == TAG || t == TAG_HUD || t == TAG_LOAD) return true
+            p = cur.parent as? View
+        }
+        return false
+    }
+
+    private fun allWindows(): List<View> {
+        return try {
+            val cl = Class.forName("android.view.WindowManagerGlobal")
+            val inst = cl.getMethod("getInstance").invoke(null)
+            val f = cl.getDeclaredField("mViews")
+            f.isAccessible = true
+            when (val raw = f.get(inst)) {
+                is List<*> -> raw.filterIsInstance<View>()
+                is Array<*> -> raw.filterIsInstance<View>()
+                else -> emptyList()
+            }
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    private fun hideOfficialLoader() {
+        try {
+            for (root in allWindows()) {
+                if (ours(root)) continue
+                buryOfficialLoader(root, 0)
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun buryOfficialLoader(v: View, depth: Int) {
+        if (depth > 16 || ours(v)) return
+        if (looksOfficialLoader(v)) {
+            var p: View = v
+            repeat(8) {
+                val par = p.parent as? View ?: return@repeat
+                if (ours(par)) return@repeat
+                p = par
+            }
+            if (!ours(p)) {
+                p.alpha = 0f
+                p.visibility = View.GONE
+            }
+            return
+        }
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) buryOfficialLoader(v.getChildAt(i), depth + 1)
+        }
     }
 
     override fun onActivityCreated(a: Activity, b: Bundle?) {
@@ -151,7 +245,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     applyMode(activity)
                 } catch (_: Throwable) {
                 }
-                main.postAtTime(this, activity, android.os.SystemClock.uptimeMillis() + 800)
+                main.postAtTime(this, activity, android.os.SystemClock.uptimeMillis() + if (waitGame) 180 else 800)
             }
         }
         main.postAtTime(tick, activity, android.os.SystemClock.uptimeMillis() + 600)
@@ -193,7 +287,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             load.tag = TAG_LOAD
             load.visibility = View.GONE
             content.addView(load, FrameLayout.LayoutParams(-1, -1))
-            load.elevation = 40f
+            load.elevation = 96f
+            load.translationZ = 96f
         }
     }
 
@@ -221,6 +316,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud?.stop()
             load?.visibility = View.VISIBLE
             (load as? LoadBar)?.start(loadingTitle(content) ?: "запуск")
+            hideOfficialLoader()
             unshiftOfficial(content, panel)
         } else {
             panel?.visibility = View.VISIBLE
@@ -489,6 +585,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     }
                 }
                 label.text = String.format("%s  ·  %d%%  ·  %s", title, shown.toInt(), step)
+                hideOfficialLoader()
                 main.postDelayed(this, 40)
             }
         }
