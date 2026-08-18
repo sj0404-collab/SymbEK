@@ -48,14 +48,20 @@ class PickActivity : Activity() {
         fun treeToPath(uri: Uri): String? {
             return try {
                 val id = DocumentsContract.getTreeDocumentId(uri)
-                val parts = id.split(":", limit = 2)
+                val decoded = Uri.decode(id)
+                val parts = decoded.split(":", limit = 2)
+                val vol = parts[0]
                 val rel = if (parts.size > 1) parts[1] else ""
-                if (parts[0].equals("primary", true)) {
-                    val f = File(android.os.Environment.getExternalStorageDirectory(), rel)
-                    if (f.isDirectory) return f.absolutePath
+                val tries = ArrayList<File>()
+                if (vol.equals("primary", true) || vol.equals("home", true)) {
+                    val sd = android.os.Environment.getExternalStorageDirectory()
+                    tries.add(File(sd, rel))
+                    tries.add(File("/sdcard", rel))
+                    tries.add(File("/storage/emulated/0", rel))
                 }
-                val alt = File("/storage/${parts[0]}/$rel")
-                if (alt.isDirectory) alt.absolutePath else null
+                tries.add(File("/storage/$vol/$rel"))
+                if (decoded.startsWith("/")) tries.add(File(decoded))
+                tries.firstOrNull { it.isDirectory }?.absolutePath
             } catch (_: Exception) {
                 null
             }

@@ -136,10 +136,11 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             val keysFile = java.io.File(play, "system/prod.keys")
             val keys = if (keysFile.isFile && keysFile.length() > 100) "ключи ${keysFile.length() / 1024} КБ" else "нет ключей"
             val nca = DataSeed.firmwareNca(host)
-            val fw = if (nca >= 10) "$nca NCA · ${DataSeed.firmwareMode(host)}" else "нет прошивки"
+            val fw = if (nca >= 5) "$nca NCA · ${DataSeed.firmwareMode(host)}" else "нет прошивки ($nca NCA в bis)"
             val src = DataSeed.firmwareSource(host).ifEmpty { "источник не выбран" }
             val acc = AccessFix.statusLine(host)
-            status.text = "$keys · $fw\nпрошивка на месте: $src\nярлыки для Kenji: ${play.absolutePath}/bis\n$acc"
+            val hunt = FirmwareHunt.lastReport
+            status.text = "$keys · $fw\nпрошивка на месте: $src\nярлыки: ${play.absolutePath}/bis\n$acc\n— сканер —\n$hunt"
             fillPresets()
         }
 

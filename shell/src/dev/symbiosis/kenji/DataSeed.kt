@@ -84,55 +84,44 @@ object DataSeed {
         // with shortcuts so one firmware stays where it already lives.
         val origin = findOrigin(context, destReg)
         if (origin != null) {
-            bridgeFirmware(context, origin, destReg)
-        } else if (countKenji(destReg) >= 10) {
+            val ok = bridgeFirmware(context, origin, destReg)
+            if (!ok) {
+                remember(
+                    context,
+                    origin.absolutePath,
+                    "нашёл ${FirmwareHunt.countNca(origin)} NCA, ярлыки не встали",
+                    countKenji(destReg),
+                )
+            }
+        } else if (countKenji(destReg) >= 5) {
             remember(context, destReg.absolutePath, modeOf(destReg), countKenji(destReg))
         }
         writePointer(context, dest)
         writeReport(context, dest)
     }
 
-    /** First dump that is NOT playHome — firmware stays there. */
+    /** Best dump that is NOT playHome registered — firmware stays there. */
     private fun findOrigin(context: Context, destReg: File): File? {
-        edenDir(context)?.let { eden ->
-            val root = File(eden)
-            val registered = File(root, "nand/system/Contents/registered")
-            val nand = File(root, "nand")
-            if (countAnyNca(registered) >= 10) return registered
-            if (countAnyNca(nand) >= 10) return nand
-        }
-        for (src in sources(context)) {
-            if (samePath(src, playHome(context))) continue
-            val kenji = File(src, "bis/system/Contents/registered")
-            val stash = File(src, "bis/system/Contents/registered.stash")
-            val eden = File(src, "nand/system/Contents/registered")
-            val nand = File(src, "nand")
-            when {
-                countKenji(kenji) >= 10 && !samePath(kenji, destReg) -> return kenji
-                countKenji(stash) >= 10 -> return stash
-                countAnyNca(eden) >= 10 -> return eden
-                countAnyNca(nand) >= 10 -> return nand
-            }
-        }
-        return null
+        val hit = FirmwareHunt.best(context) ?: return null
+        if (samePath(hit.dir, destReg)) return null
+        return hit.dir
     }
 
     private fun autoDiscoverEden(context: Context) {
         if (edenDir(context) != null) return
-        val sd = Environment.getExternalStorageDirectory()
-        val guesses = listOf(
-            "Eden/files", "Eden", "Download/ed/Eden/files", "Download/ed/Eden",
-            "Android/data/dev.eden.eden_emulator/files",
-        )
-        for (rel in guesses) {
-            val f = File(sd, rel)
-            val nand = File(f, "nand/system/Contents/registered")
-            if (countAnyNca(nand) >= 10 || countAnyNca(File(f, "nand")) >= 10) {
+        val hit = FirmwareHunt.best(context) ?: return
+        var p = hit.dir
+        // store the emulator root if we landed on …/nand/…/registered
+        repeat(4) {
+            if (File(p, "nand").isDirectory || File(p, "keys").isDirectory || File(p, "load").isDirectory) {
                 context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-                    .edit().putString(PREF_EDEN, f.absolutePath).commit()
+                    .edit().putString(PREF_EDEN, p.absolutePath).commit()
                 return
             }
+            p = p.parentFile ?: return
         }
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit().putString(PREF_EDEN, hit.dir.absolutePath).commit()
     }
 
     fun keysOk(context: Context): Boolean {
@@ -332,7 +321,7 @@ object DataSeed {
             if (how == "hardlink") mode = "жёсткие ссылки"
         }
         val n = countKenji(destReg)
-        if (n < 10) return false
+        if (n < 5) return false
         remember(context, srcReg.absolutePath, mode, n)
         writeReport(context, kenjiHome(context))
         Log.i("KenjiSpace", "fw $mode $n ← ${srcReg.absolutePath}")
