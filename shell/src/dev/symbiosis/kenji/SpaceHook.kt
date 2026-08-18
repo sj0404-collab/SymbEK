@@ -452,7 +452,14 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             (load as? LoadBar)?.stop()
             load?.visibility = View.GONE
             stripInjected()
-            if (panel !      } catch (_: Throwable) {
+            if (panel != null) panel.post { shiftOfficial(content, panel) }
+        }
+    }
+
+    private fun hideOfficialBottomHud(root: ViewGroup) {
+        try {
+            walkHide(root, 0)
+        } catch (_: Throwable) {
         }
     }
 
