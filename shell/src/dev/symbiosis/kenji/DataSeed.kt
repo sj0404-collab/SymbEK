@@ -15,6 +15,8 @@ import java.util.Locale
  * Firmware is never copied: each bis/.../{id}.nca/00 is a symlink or hardlink.
  */
 object DataSeed {
+    @Volatile var allowEnsure: Boolean = true
+
     private const val PREF = "kenji_space"
     private const val PREF_SRC = "fw_source"
     private const val PREF_MODE = "fw_mode"
@@ -57,6 +59,7 @@ object DataSeed {
     }
 
     fun ensure(context: Context) {
+        if (!allowEnsure) return
         try {
             ensureInner(context)
         } catch (t: Throwable) {

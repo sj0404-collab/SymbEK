@@ -34,7 +34,13 @@ class PickActivity : Activity() {
             }
             val path = treeToPath(uri)
             val kind = intent.getStringExtra("kind") ?: "eden"
-            if (path != null) {
+            if (kind == "games") {
+                val e = android.preference.PreferenceManager.getDefaultSharedPreferences(this).edit()
+                e.putString("gameFolder", uri.toString())
+                if (path != null) e.putString("gameFolderPath", path)
+                e.commit()
+                Toast.makeText(this, "папка игр: ${path ?: uri}", Toast.LENGTH_LONG).show()
+            } else if (path != null) {
                 if (kind == "kenji") DataSeed.setKenjiDir(this, path) else DataSeed.setEdenDir(this, path)
                 Toast.makeText(this, "$kind: $path", Toast.LENGTH_LONG).show()
             } else {

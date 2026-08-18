@@ -11,7 +11,13 @@ object SettingsBank {
     private fun space(c: Context) = c.getSharedPreferences("kenji_space", Context.MODE_PRIVATE)
     private fun official(c: Context) = PreferenceManager.getDefaultSharedPreferences(c)
 
-    fun applyDefaultOnce(c: Context) {
+    fun enableFps(c: Context) {
+        val p = official(c)
+        listOf(
+            "showFps", "enableFps", "enableFpsCounter", "showFpsCounter",
+            "enableStatistics", "showHud", "enableHud", "enableOverlay",
+        ).forEach { SafePrefs.putBool(p, it, true) }
+    }
         if (SafePrefs.bool(space(c), "mali_applied", false)) return
         applyDefault(c)
         SafePrefs.putBool(space(c), "mali_applied", true)
