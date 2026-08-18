@@ -146,28 +146,44 @@ object DataSeed {
         }
     }
 
-    private fun pointAppPath(context: Context, dest: File) {
-        val app = appPath(context)
-        if (samePath(app, dest)) return
-        linkDir(File(dest, "bis"), File(app, "bis"))
-        linkDir(File(dest, "system"), File(app, "system"))
+    /**
+     * An empty /sdcard/Kenji was previously symlinked over Android/data/.../bis.
+     * Official Kenji then saw zero NCA. Drop that symlink if the target is empty.
+     */
+    private fun repairAppPath(context: Context) {
+        val app = playHome(context)
+        val bis = File(app, "bis")
+        val registered = File(bis, "system/Contents/registered")
+        if (isShortcut(bis) && countKenji(registered) < 10) {
+            Log.w("KenjiSpace", "drop empty bis symlink → ${readLink(bis)}")
+            bis.delete()
+            File(app, "bis/system/Contents/registered").mkdirs()
+        }
+        val system = File(app, "system")
+        val keys = File(system, "prod.keys")
+        if (isShortcut(system) && !(keys.isFile && keys.length() > 100)) {
+            system.delete()
+            system.mkdirs()
+        }
     }
 
-    private fun linkDir(src: File, dest: File) {
-        if (!src.exists()) src.mkdirs()
-        if (samePath(src, dest)) return
-        if (dest.exists() && isShortcut(dest)) return
-        if (dest.exists() && dest.isDirectory) {
-            val kids = dest.listFiles()
-            if (kids != null && kids.isNotEmpty()) return
-            dest.delete()
-        }
-        try {
-            dest.parentFile?.mkdirs()
-            Os.symlink(src.absolutePath, dest.absolutePath)
-        } catch (t: Throwable) {
-            Log.w("KenjiSpace", "dirlink ${dest.name}", t)
-        }
+    private fun readLink(f: File): String = try {
+        Os.readlink(f.absolutePath)
+    } catch (_: Throwable) {
+        f.absolutePath
+    }
+
+    /** Shortcuts into the user Kenji folder. Official still reads playHome. */
+    private fun mirrorToUserKenji(context: Context, play: File) {
+        val user = userKenjiDir(context) ?: return
+        if (samePath(user, play)) return
+        File(user, "system").mkdirs()
+        File(user, "bis/system/Contents/registered").mkdirs()
+        copyKey(File(play, "system/prod.keys"), File(user, "system/prod.keys"))
+        val srcReg = File(play, "bis/system/Contents/registered")
+        val dstReg = File(user, "bis/system/Contents/registered")
+        if (countKenji(srcReg) >= 10) bridgeFirmware(context, srcReg, dstReg)
+        writeReport(context, user)
     }
 
     private fun sources(context: Context): List<File> {
