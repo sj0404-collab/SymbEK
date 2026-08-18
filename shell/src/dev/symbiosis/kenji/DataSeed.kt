@@ -112,7 +112,6 @@ object DataSeed {
         } else if (!ok && countKenji(destReg) >= 5) {
             remember(context, destReg.absolutePath, modeOf(destReg), countKenji(destReg))
         }
-        pointOfficialAppPath(context)
         writePointer(context, dest)
         writeReport(context, dest)
     }

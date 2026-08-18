@@ -1,7 +1,6 @@
 package dev.symbiosis.kenji
 
 import android.app.Activity
-import android.app.ActivityManager
 import android.app.Application
 import android.content.Context
 import android.content.Intent
@@ -47,22 +46,24 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     fun inGame(ctx: Context): Boolean {
-        val act = ctx as? Activity
-        val boot = act?.intent?.getStringExtra("bootPath")
-        if (!boot.isNullOrBlank()) return true
-        val action = act?.intent?.action.orEmpty()
-        if (action.contains("LAUNCH_GAME") || action.contains("EMULAT")) return true
-        return try {
-            val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-            @Suppress("DEPRECATION")
-            am.getRunningServices(64).any { s ->
-                val n = s.service.className
-                n.contains("Emulation", true) || n.contains("GameHost", true) ||
-                    n.contains("Vulkan", true)
+        val act = ctx as? Activity ?: return false
+        // Loading screen is still the library activity — do not treat it as in-game.
+        // Only a large game surface means the title is actually rendering.
+        return hasGameSurface(act.findViewById(android.R.id.content))
+    }
+
+    private fun hasGameSurface(v: View?): Boolean {
+        if (v == null) return false
+        val n = v.javaClass.name
+        val surface = n.contains("SurfaceView") || n.contains("GLSurface") ||
+            n.contains("Vulkan", true) || n.contains("TextureView")
+        if (surface && v.width > 400 && v.height > 400) return true
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) {
+                if (hasGameSurface(v.getChildAt(i))) return true
             }
-        } catch (_: Exception) {
-            false
         }
+        return false
     }
 
     override fun onActivityResumed(activity: Activity) {
@@ -137,8 +138,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         if (content.findViewWithTag<View>(TAG_PLUS) == null) {
             val plus = plusFab(activity)
             plus.tag = TAG_PLUS
-            val lp = FrameLayout.LayoutParams(dp(activity, 56), dp(activity, 56), Gravity.BOTTOM or Gravity.END)
-            lp.marginEnd = dp(activity, 88)
+            val lp = FrameLayout.LayoutParams(dp(activity, 52), dp(activity, 52), Gravity.BOTTOM or Gravity.START)
+            lp.marginStart = dp(activity, 16)
             lp.bottomMargin = dp(activity, 20)
             content.addView(plus, lp)
             plus.elevation = 20f
@@ -376,6 +377,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     private class GameHud(private val host: Activity) : FrameLayout(host) {
+        override fun onTouchEvent(event: android.view.MotionEvent): Boolean = false
+        override fun onInterceptTouchEvent(ev: android.view.MotionEvent): Boolean = false
         private val fps: TextView
         private val sheet: LinearLayout
         private var frames = 0
@@ -422,6 +425,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             fabLp.marginStart = dp(16)
             fabLp.bottomMargin = dp(24)
             addView(fab, fabLp)
+            isClickable = false
+            isFocusable = false
 
             sheet = LinearLayout(host)
             sheet.orientation = LinearLayout.VERTICAL

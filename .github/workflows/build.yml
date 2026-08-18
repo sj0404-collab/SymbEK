@@ -141,7 +141,7 @@ jobs:
           for i in 1 2 3 4 5; do
             if gh release create latest Kenji-Space.apk \
               --title "Kenji Space ${KENJI_VERSION_NAME}" \
-              --notes "Не трогаем bis во время игры (Loading). Панель в игре скрыта. Плавающая P — пресеты без паузы, FPS, «+» — папка игр. ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
+              --notes "FPS только когда есть game surface, не на Loading. «+» слева, не на их FAB. AppPath не переписываем. ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
             then
               exit 0
             fi
