@@ -18,6 +18,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -62,15 +63,17 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
 
     fun inGame(ctx: Context): Boolean {
         val act = ctx as? Activity ?: return false
-        return hasGameSurface(act.findViewById(android.R.id.content))
+        return hasGameSurface(act.findViewById(android.R.id.content)) ||
+            hasGameSurface(act.window?.decorView)
     }
 
-    private fun hasGameSurface(v: View?): Boolean {
+    internal fun hasGameSurface(v: View?): Boolean {
         if (v == null) return false
         val n = v.javaClass.name
         val surface = n.contains("SurfaceView") || n.contains("GLSurface") ||
-            n.contains("Vulkan", true) || n.contains("TextureView")
-        if (surface && v.width > 400 && v.height > 400) return true
+            n.contains("Vulkan", true) || n.contains("TextureView") ||
+            n.contains("SurfaceControl") || n.contains("NativeSurface")
+        if (surface && v.width > 200 && v.height > 200) return true
         if (v is ViewGroup) {
             for (i in 0 until v.childCount) {
                 if (hasGameSurface(v.getChildAt(i))) return true
@@ -100,24 +103,27 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             waitGame = false
             return false
         }
-        if (hasGameSurface(content)) {
+        if (hasGameSurface(content) || hasGameSurface(activity.window?.decorView)) {
             playing = true
             waitGame = false
             return false
+        }
+        if (waitGame) {
+            // Library stays under the official Compose dialog — never drop
+            // waitGame just because Search / our panel are still in the tree.
+            val age = android.os.SystemClock.elapsedRealtime() - tappedAt
+            if (age > 120_000L && !officialGameDialog() && looksLikeLibrary(content)) {
+                waitGame = false
+                return false
+            }
+            return true
         }
         val title = scrapeLoadingTitle()
         if ((title != null && looksGameLoad(title)) || officialGameDialog()) {
             waitGame = true
             return true
         }
-        if (waitGame && looksLikeLibrary(content) && !officialGameDialog()) {
-            val age = android.os.SystemClock.elapsedRealtime() - tappedAt
-            if (age > 8_000L) {
-                waitGame = false
-                return false
-            }
-        }
-        return waitGame
+        return false
     }
 
     private fun looksGameLoad(title: String): Boolean {
@@ -141,11 +147,26 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         if (playing) return false
         for (root in allWindows()) {
             if (ours(root) || isOurDialog(root)) continue
-            if (looksLikeLibrary(root)) continue
+            if (hasGameSurface(root)) continue
             if (findOfficialLoader(root, 0)) return true
             if (isKenjiLoadWindow(root)) return true
+            if (isExtraDialogWindow(root)) return true
         }
         return false
+    }
+
+    /** Compose Loading is often one MATCH_PARENT window with no TextView children. */
+    private fun isExtraDialogWindow(root: View): Boolean {
+        val lp = root.layoutParams as? WindowManager.LayoutParams ?: return false
+        val type = lp.type
+        val dialogish = type == WindowManager.LayoutParams.TYPE_APPLICATION ||
+            type == WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG ||
+            type == WindowManager.LayoutParams.TYPE_APPLICATION_PANEL ||
+            type == WindowManager.LayoutParams.TYPE_APPLICATION_SUB_PANEL
+        if (!dialogish) return false
+        val title = lp.title?.toString().orEmpty()
+        if (title.contains("kenji-space", ignoreCase = true)) return false
+        return true
     }
 
     private fun isKenjiLoadWindow(root: View): Boolean {
@@ -186,8 +207,9 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
 
     private fun looksLikeLibrary(root: View?): Boolean {
         if (root == null) return false
-        if (findText(root, "Search") || findText(root, "Unknown") || findText(root, "Kenji Space")) return true
-        return false
+        // Do not match our own panel text ("Kenji Space") — that made the
+        // activity look like the shelf while Loading BLADE CHIMERA was up.
+        return findText(root, "Search")
     }
 
     private fun findText(v: View, needle: String): Boolean {
@@ -371,7 +393,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     applyMode(activity)
                 } catch (_: Throwable) {
                 }
-                val gap = if (playing) 2000 else if (waitGame) 400 else 1200
+                val gap = if (playing) 2500 else if (waitGame) 800 else 1500
                 main.postAtTime(this, activity, android.os.SystemClock.uptimeMillis() + gap)
             }
         }
@@ -420,12 +442,17 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     private fun applyMode(activity: Activity) {
+        try {
+            activity.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } catch (_: Throwable) {
+        }
         val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
-        val game = inGame(activity) || playing
-        if (looksLikeLibrary(content) && !hasGameSurface(content) && !waitGame) {
+        val surface = hasGameSurface(content) || hasGameSurface(activity.window?.decorView)
+        if (surface) playing = true
+        if (playing && looksLikeLibrary(content) && !surface && !waitGame) {
             playing = false
         }
-        val official = !playing && officialGameDialog()
+        val game = playing || surface
         val busy = !playing && launching(activity, content)
         DataSeed.allowEnsure = !game
         val panel = content.findViewWithTag<View>(TAG) as? Panel
@@ -441,6 +468,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud?.visibility = View.VISIBLE
             hud?.start()
             unshiftOfficial(content, panel)
+            LoadOverlay.buryKenji(activity)
         } else if (busy) {
             waitGame = true
             panel?.collapse()
@@ -763,8 +791,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                 val live = BootLog.lastKernel().ifBlank { BootLog.tail(1) }
                 val tail = BootLog.tail(3)
                 log.text = listOf(step, live, tail).filter { it.isNotBlank() }.distinct().joinToString("\n")
-                hideOfficialLoader(host)
-                main.postDelayed(this, 32)
+                main.postDelayed(this, 80)
             }
         }
 

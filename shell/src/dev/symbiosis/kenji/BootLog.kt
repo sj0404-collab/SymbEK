@@ -110,25 +110,8 @@ object BootLog {
     }
 
     fun startLogcat() {
-        if (logcatStarted) return
-        logcatStarted = true
-        val t = Thread({
-            try {
-                val pb = ProcessBuilder("logcat", "-v", "brief", "-T", "1")
-                pb.redirectErrorStream(true)
-                val proc = pb.start()
-                val r = BufferedReader(InputStreamReader(proc.inputStream))
-                while (true) {
-                    val raw = r.readLine() ?: break
-                    if (interesting(raw)) kernel(shorten(raw))
-                }
-            } catch (t: Throwable) {
-                add("logcat: ${t.message}")
-            }
-        }, "kenji-logcat")
-        t.isDaemon = true
-        t.start()
-        add("logcat: слушаю ядро / JNI")
+        // Never attach a perpetual logcat. It starved the system and
+        // other apps were killed. JNI lines still arrive via BootLog.add.
     }
 
     fun deviceLine(): String {
