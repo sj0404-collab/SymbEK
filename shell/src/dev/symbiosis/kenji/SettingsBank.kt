@@ -18,6 +18,8 @@ object SettingsBank {
             "enableStatistics", "showHud", "enableHud", "enableOverlay",
         ).forEach { SafePrefs.putBool(p, it, true) }
     }
+
+    fun applyDefaultOnce(c: Context) {
         if (SafePrefs.bool(space(c), "mali_applied", false)) return
         applyDefault(c)
         SafePrefs.putBool(space(c), "mali_applied", true)
