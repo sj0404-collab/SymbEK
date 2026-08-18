@@ -131,21 +131,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           MD5=$(md5sum Kenji-Space.apk | cut -d' ' -f1)
           SIZE=$(stat -c%s Kenji-Space.apk)
-          for i in 1 2 3 4 5; do
-            gh release delete latest --yes && break || true
-            sleep $((i * 2))
-          done
+          VER="$KENJI_VERSION_NAME"
+          cp Kenji-Space.apk "Kenji-Space-${VER}.apk"
+          if [ -f "releases/${VER}.md" ]; then
+            cat "releases/${VER}.md" > /tmp/rel.md
+          else
+            printf 'Kenji Space %s (code %s)\n\nОтдельный релиз. Старые теги v1.0.xx не удаляются.\n' "$VER" "$KENJI_VERSION_CODE" > /tmp/rel.md
+          fi
+          printf '\n\nMD5 %s · %s байт\n' "$MD5" "$SIZE" >> /tmp/rel.md
+          if ! gh release view "v${VER}" >/dev/null 2>&1; then
+            gh release create "v${VER}" "Kenji-Space-${VER}.apk" \
+              --title "Kenji Space ${VER}" \
+              --notes-file /tmp/rel.md
+          else
+            gh release upload "v${VER}" "Kenji-Space-${VER}.apk" --clobber
+          fi
+          gh release delete latest --yes || true
           git push origin :refs/tags/latest || true
-          for i in 1 2 3 4 5; do
-            if gh release create latest Kenji-Space.apk \
-              --title "Kenji Space ${KENJI_VERSION_NAME}" \
-              --notes "Журнал запуска (порядок + JNI) и вес прошивки (NCA · ГБ). AppPath на Eden/files до ядра, без копии. ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
-            then
-              exit 0
-            fi
-            sleep $((i * 3))
-          done
-          echo "::error::не смог выложить latest"
-          exit 1
+          gh release create latest Kenji-Space.apk \
+            --title "Kenji Space ${VER} (latest)" \
+            --notes "Ярлык на постоянный релиз v${VER}. Все сборки: теги v1.0.xx в Releases."
