@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Inject Kotlin seed only. Official MainActivity stays the launcher."""
+"""Inject Kotlin seed + native home. Official MainActivity is the player only."""
 from __future__ import annotations
 
 import pathlib
+import re
 import shutil
 import sys
 
@@ -61,6 +62,35 @@ if "dev.symbiosis.kenji.PickActivity" not in text:
         raise SystemExit("application close")
     text = text[:idx] + act + text[idx:]
 
+# Our home is the launcher. Official MainActivity stays for bootPath / play.
+if "dev.symbiosis.kenji.HomeActivity" not in text:
+    home = """
+        <activity android:exported="true" android:name="dev.symbiosis.kenji.HomeActivity" android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+"""
+    idx = text.rfind("</application>")
+    text = text[:idx] + home + text[idx:]
+
+# Drop LAUNCHER from official MainActivity so the shelf is ours.
+text = re.sub(
+    r'(<activity[^>]*android:name="org\.kenjinx\.android\.MainActivity"[^>]*>)(.*?)(</activity>)',
+    lambda m: m.group(1)
+    + re.sub(
+        r'\s*<category android:name="android.intent.category.LAUNCHER"\s*/>',
+        "",
+        m.group(2),
+        flags=re.S,
+    )
+    + m.group(3),
+    text,
+    count=1,
+    flags=re.S,
+)
+
 manifest.write_text(text, encoding="utf-8")
 
-print("injected Kotlin SeedProvider +", "classes4.dex" if DEX and DEX.is_file() else "no dex")
+print("injected Kotlin SeedProvider + HomeActivity +", "classes4.dex" if DEX and DEX.is_file() else "no dex")

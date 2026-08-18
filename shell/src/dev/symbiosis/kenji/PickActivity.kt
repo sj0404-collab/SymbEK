@@ -37,7 +37,10 @@ class PickActivity : Activity() {
             if (kind == "games") {
                 val e = android.preference.PreferenceManager.getDefaultSharedPreferences(this).edit()
                 e.putString("gameFolder", uri.toString())
-                if (path != null) e.putString("gameFolderPath", path)
+                if (path != null) {
+                    e.putString("gameFolderPath", path)
+                    GameShelf.addPath(this, path)
+                }
                 e.commit()
                 Toast.makeText(this, "папка игр: ${path ?: uri}", Toast.LENGTH_LONG).show()
             } else if (path != null) {

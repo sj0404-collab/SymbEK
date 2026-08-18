@@ -96,8 +96,20 @@ jobs:
           python3 official/replace_icon.py /tmp/official-apktool official/icon_master.png
           python3 official/inject_shell.py /tmp/official-apktool /tmp/shell-dex/classes.dex
           grep -q 'dev.symbiosis.kenji.SeedProvider' /tmp/official-apktool/AndroidManifest.xml
+          grep -q 'dev.symbiosis.kenji.HomeActivity' /tmp/official-apktool/AndroidManifest.xml
           grep -q 'org.kenjinx.android.MainActivity' /tmp/official-apktool/AndroidManifest.xml
           ! grep -q 'LibraryActivity' /tmp/official-apktool/AndroidManifest.xml
+          python3 - <<'PY'
+import pathlib
+t = pathlib.Path("/tmp/official-apktool/AndroidManifest.xml").read_text()
+idx = t.find("dev.symbiosis.kenji.HomeActivity")
+if idx < 0 or "android.intent.category.LAUNCHER" not in t[idx:idx+900]:
+    raise SystemExit("HomeActivity is not the launcher")
+m = t.find("org.kenjinx.android.MainActivity")
+if "LAUNCHER" in t[m:m+2500]:
+    raise SystemExit("MainActivity still has LAUNCHER")
+print("launcher ok")
+PY
 
           java -jar /tmp/apktool.jar b /tmp/official-apktool -o /tmp/kenji-unsigned.apk
 
