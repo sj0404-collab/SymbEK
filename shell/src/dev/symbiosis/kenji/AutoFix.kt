@@ -9,7 +9,7 @@ import java.io.File
 /**
  * The original Space auto-fix, without crashing official Kenji:
  * stash/junk → registered, keys/ → system/prod.keys,
- * Eden nand/*.nca → playHome/bis/{id}.nca/00 as shortcuts (no copy).
+ * Eden nand .nca → playHome bis id.nca/00 as shortcuts (no copy).
  */
 object AutoFix {
     @Volatile var lastLog: String = ""
