@@ -29,6 +29,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     private const val MUTED = 0xFFB8B8C4.toInt()
 
     @Volatile private var installed = false
+    @Volatile private var askedFiles = false
 
     fun install(app: Application) {
         if (installed) return
@@ -40,6 +41,12 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         if (activity.javaClass.name != "org.kenjinx.android.MainActivity") return
         activity.window?.decorView?.post {
             try {
+                AccessFix.repair(activity)
+                if (!askedFiles && !AccessFix.hasAllFiles()) {
+                    askedFiles = true
+                    AccessFix.askAllFiles(activity)
+                }
+                DataSeed.ensure(activity)
                 attach(activity)
             } catch (t: Throwable) {
                 android.util.Log.e("KenjiSpace", "overlay", t)
@@ -114,9 +121,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
 
             bridges = LinearLayout(host)
             bridges.orientation = VERTICAL
-            bridges.addView(rowBtn("Папка Eden/files") { pick("eden") })
-            bridges.addView(rowBtn("Папка Kenji (ярлыки)") { pick("kenji") })
-            bridges.addView(rowBtn("Сохранить настройки", accent = true) { save() })
+            bridges.addView(rowBtn("Папка Eden/files (оригинал прошивки)") { pick("eden") })
+            bridges.addView(rowBtn("Починить всё", accent = true) { save() })
             addView(bridges)
 
             presets = LinearLayout(host)
@@ -132,8 +138,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             val nca = DataSeed.firmwareNca(host)
             val fw = if (nca >= 10) "$nca NCA · ${DataSeed.firmwareMode(host)}" else "нет прошивки"
             val src = DataSeed.firmwareSource(host).ifEmpty { "источник не выбран" }
-            val mirror = DataSeed.userKenjiDir(host)?.absolutePath ?: "нет (только Android/data)"
-            status.text = "$keys · $fw\nKenji читает: ${play.absolutePath}\nЗеркало ярлыков: $mirror\nEden: ${DataSeed.edenDir(host) ?: "авто"}\n$src"
+            val acc = AccessFix.statusLine(host)
+            status.text = "$keys · $fw\nпрошивка на месте: $src\nярлыки для Kenji: ${play.absolutePath}/bis\n$acc"
             fillPresets()
         }
 
@@ -147,6 +153,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
 
         private fun save() {
             try {
+                AccessFix.repair(host)
+                if (!AccessFix.hasAllFiles()) AccessFix.askAllFiles(host)
                 DataSeed.ensure(host)
                 SettingsBank.saveNamed(host, "последние")
                 refresh()

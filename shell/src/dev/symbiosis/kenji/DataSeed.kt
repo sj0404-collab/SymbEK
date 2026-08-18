@@ -67,47 +67,72 @@ object DataSeed {
     private fun ensureInner(context: Context) {
         val dest = playHome(context)
         repairAppPath(context)
-        restoreOrphanStash(dest)
+        PathFix.repairTree(dest)
+        AccessFix.repair(context)
+        autoDiscoverEden(context)
         val destKeys = File(dest, "system/prod.keys")
         for (src in sources(context)) {
+            PathFix.repairTree(src)
             restoreOrphanStash(src)
             harvestKeys(src, destKeys)
         }
         harvestLooseKeys(destKeys)
 
         val destReg = File(dest, "bis/system/Contents/registered")
-        if (countKenji(destReg) < 10) {
-            edenDir(context)?.let { eden ->
-                val root = File(eden)
-                val registered = File(root, "nand/system/Contents/registered")
-                val nand = File(root, "nand")
-                when {
-                    countAnyNca(registered) >= 10 -> bridgeFirmware(context, registered, destReg)
-                    countAnyNca(nand) >= 10 -> bridgeFirmware(context, nand, destReg)
-                }
-            }
-        }
-        if (countKenji(destReg) < 10) {
-            for (src in sources(context)) {
-                val kenji = File(src, "bis/system/Contents/registered")
-                val stash = File(src, "bis/system/Contents/registered.stash")
-                val eden = File(src, "nand/system/Contents/registered")
-                val nand = File(src, "nand")
-                when {
-                    countKenji(kenji) >= 10 && !samePath(kenji, destReg) &&
-                        bridgeFirmware(context, kenji, destReg) -> break
-                    countKenji(stash) >= 10 && bridgeFirmware(context, stash, destReg) -> break
-                    countAnyNca(eden) >= 10 && bridgeFirmware(context, eden, destReg) -> break
-                    countAnyNca(nand) >= 10 && countAnyNca(eden) < 10 &&
-                        bridgeFirmware(context, nand, destReg) -> break
-                }
-            }
-        }
-        if (countKenji(destReg) >= 10) {
+        destReg.mkdirs()
+        // Always (re)link to the original dump. Never copy. Replace old copies
+        // with shortcuts so one firmware stays where it already lives.
+        val origin = findOrigin(context, destReg)
+        if (origin != null) {
+            bridgeFirmware(context, origin, destReg)
+        } else if (countKenji(destReg) >= 10) {
             remember(context, destReg.absolutePath, modeOf(destReg), countKenji(destReg))
         }
-        mirrorToUserKenji(context, dest)
+        writePointer(context, dest)
         writeReport(context, dest)
+    }
+
+    /** First dump that is NOT playHome — firmware stays there. */
+    private fun findOrigin(context: Context, destReg: File): File? {
+        edenDir(context)?.let { eden ->
+            val root = File(eden)
+            val registered = File(root, "nand/system/Contents/registered")
+            val nand = File(root, "nand")
+            if (countAnyNca(registered) >= 10) return registered
+            if (countAnyNca(nand) >= 10) return nand
+        }
+        for (src in sources(context)) {
+            if (samePath(src, playHome(context))) continue
+            val kenji = File(src, "bis/system/Contents/registered")
+            val stash = File(src, "bis/system/Contents/registered.stash")
+            val eden = File(src, "nand/system/Contents/registered")
+            val nand = File(src, "nand")
+            when {
+                countKenji(kenji) >= 10 && !samePath(kenji, destReg) -> return kenji
+                countKenji(stash) >= 10 -> return stash
+                countAnyNca(eden) >= 10 -> return eden
+                countAnyNca(nand) >= 10 -> return nand
+            }
+        }
+        return null
+    }
+
+    private fun autoDiscoverEden(context: Context) {
+        if (edenDir(context) != null) return
+        val sd = Environment.getExternalStorageDirectory()
+        val guesses = listOf(
+            "Eden/files", "Eden", "Download/ed/Eden/files", "Download/ed/Eden",
+            "Android/data/dev.eden.eden_emulator/files",
+        )
+        for (rel in guesses) {
+            val f = File(sd, rel)
+            val nand = File(f, "nand/system/Contents/registered")
+            if (countAnyNca(nand) >= 10 || countAnyNca(File(f, "nand")) >= 10) {
+                context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+                    .edit().putString(PREF_EDEN, f.absolutePath).commit()
+                return
+            }
+        }
     }
 
     fun keysOk(context: Context): Boolean {
@@ -173,17 +198,19 @@ object DataSeed {
         f.absolutePath
     }
 
-    /** Shortcuts into the user Kenji folder. Official still reads playHome. */
-    private fun mirrorToUserKenji(context: Context, play: File) {
+    /** Pointer only — do not grow a second firmware tree. */
+    private fun writePointer(context: Context, play: File) {
         val user = userKenjiDir(context) ?: return
         if (samePath(user, play)) return
-        File(user, "system").mkdirs()
-        File(user, "bis/system/Contents/registered").mkdirs()
-        copyKey(File(play, "system/prod.keys"), File(user, "system/prod.keys"))
-        val srcReg = File(play, "bis/system/Contents/registered")
-        val dstReg = File(user, "bis/system/Contents/registered")
-        if (countKenji(srcReg) >= 10) bridgeFirmware(context, srcReg, dstReg)
-        writeReport(context, user)
+        try {
+            File(user, "system").mkdirs()
+            File(user, "WHERE_FIRMWARE.txt").writeText(
+                "Прошивка не копируется и не переезжает.\n" +
+                    "Оригинал: ${firmwareSource(context)}\n" +
+                    "Kenji читает ярлыки: ${File(play, "bis/system/Contents/registered").absolutePath}\n",
+            )
+        } catch (_: Exception) {
+        }
     }
 
     private fun sources(context: Context): List<File> {
@@ -298,9 +325,8 @@ object DataSeed {
             val destDir = File(destReg, name)
             val dest = File(destDir, "00")
             if (isReadableNca(dest) && isShortcut(dest)) continue
-            if (dest.isFile && !isShortcut(dest) && dest.length() == payload.length()) {
-                if (!dest.delete()) continue
-            }
+            // Old full copy of the same dump — swap for a shortcut, free the bytes.
+            if (dest.exists()) dest.delete()
             destDir.mkdirs()
             val how = shortcut(payload, dest) ?: continue
             if (how == "hardlink") mode = "жёсткие ссылки"

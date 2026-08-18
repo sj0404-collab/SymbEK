@@ -28,6 +28,21 @@ text = manifest.read_text(encoding="utf-8")
 if 'android:name="org.kenjinx.android.MainActivity"' not in text:
     raise SystemExit("official MainActivity missing")
 
+for perm in (
+    "android.permission.MANAGE_EXTERNAL_STORAGE",
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.WRITE_EXTERNAL_STORAGE",
+):
+    needle = f'android:name="{perm}"'
+    if needle not in text:
+        text = text.replace(
+            "<application",
+            f'    <uses-permission android:name="{perm}" android:maxSdkVersion="32"/>\n    <application'
+            if "MANAGE" not in perm
+            else f'    <uses-permission android:name="{perm}"/>\n    <application',
+            1,
+        )
+
 if "dev.symbiosis.kenji.SeedProvider" not in text:
     provider = """
         <provider android:authorities="dev.symbiosis.kenji.seed" android:exported="false" android:initOrder="2147483647" android:name="dev.symbiosis.kenji.SeedProvider"/>

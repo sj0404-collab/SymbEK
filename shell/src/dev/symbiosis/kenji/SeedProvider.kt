@@ -17,6 +17,7 @@ class SeedProvider : ContentProvider() {
             val ctx = context
             if (ctx != null) {
                 WebWipe.run(ctx)
+                AccessFix.repair(ctx)
                 DataSeed.ensure(ctx)
                 SettingsBank.applyDefaultOnce(ctx)
                 val app = ctx.applicationContext
