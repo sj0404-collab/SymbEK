@@ -83,8 +83,27 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         else
             ViewGroup.LayoutParams(-1, -2)
         content.addView(panel, lp)
-        panel.elevation = 24f
+        panel.elevation = 8f
         panel.refresh()
+        panel.post { shiftOfficial(content, panel) }
+    }
+
+    private fun shiftOfficial(content: ViewGroup, panel: View) {
+        val h = panel.height
+        if (h <= 0) return
+        for (i in 0 until content.childCount) {
+            val v = content.getChildAt(i)
+            if (v === panel) continue
+            val p = v.layoutParams
+            if (p is FrameLayout.LayoutParams) {
+                if (p.topMargin != h) {
+                    p.topMargin = h
+                    v.layoutParams = p
+                }
+            } else if (v.paddingTop != h) {
+                v.setPadding(v.paddingLeft, h, v.paddingRight, v.paddingBottom)
+            }
+        }
     }
 
     private class Panel(private val host: Activity) : LinearLayout(host) {
@@ -146,6 +165,10 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         private fun toggle() {
             open = !open
             body.visibility = if (open) VISIBLE else GONE
+            post {
+                val content = host.findViewById<ViewGroup>(android.R.id.content) ?: return@post
+                shiftOfficial(content, this)
+            }
         }
 
         fun refresh() {

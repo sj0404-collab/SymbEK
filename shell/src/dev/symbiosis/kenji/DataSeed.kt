@@ -86,7 +86,13 @@ object DataSeed {
         if (kenjiHit != null) {
             val srcBis = bisRootOf(kenjiHit.dir)
             ok = bindDir(srcBis, playBis)
+            if (!ok) ok = bindDir(srcBis, File(context.filesDir, "bis"))
             if (ok) remember(context, srcBis.absolutePath, "ярлык на всю bis/", firmwareNca(context))
+            if (!ok) {
+                wipeEmptyBis(playBis)
+                destReg.mkdirs()
+                ok = bridgeFirmware(context, File(srcBis, "system/Contents/registered"), destReg)
+            }
         }
         if (!ok && anyHit != null && !samePath(anyHit.dir, destReg)) {
             wipeEmptyBis(playBis)
@@ -103,6 +109,7 @@ object DataSeed {
         } else if (!ok && countKenji(destReg) >= 5) {
             remember(context, destReg.absolutePath, modeOf(destReg), countKenji(destReg))
         }
+        pointOfficialAppPath(context)
         writePointer(context, dest)
         writeReport(context, dest)
     }
@@ -236,7 +243,18 @@ object DataSeed {
     }
 
     /** Pointer only — do not grow a second firmware tree. */
-    private fun writePointer(context: Context, play: File) {
+    private fun pointOfficialAppPath(context: Context) {
+        val eden = edenDir(context) ?: return
+        try {
+            val e = android.preference.PreferenceManager.getDefaultSharedPreferences(context).edit()
+            listOf("AppPath", "appPath", "dataPath").forEach { key ->
+                // Do not override if they already point at a working tree.
+                e.putString(key, eden)
+            }
+            e.commit()
+        } catch (_: Exception) {
+        }
+    }
         val user = userKenjiDir(context) ?: return
         if (samePath(user, play)) return
         try {
