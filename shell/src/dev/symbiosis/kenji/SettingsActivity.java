@@ -9,10 +9,8 @@ import android.preference.PreferenceManager;
 import android.util.TypedValue;
 import android.view.View;
 import android.widget.Button;
-import android.widget.CompoundButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -26,20 +24,42 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        SettingsBank.ensureBuiltins(this);
-        p = PreferenceManager.getDefaultSharedPreferences(this);
-        ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(LibraryActivity.BG);
-        body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        int pad = dp(16);
-        body.setPadding(pad, dp(22), pad, pad);
-        scroll.addView(body);
-        setContentView(scroll);
-        draw();
+        try {
+            WebWipe.run(this);
+            SettingsBank.ensureBuiltins(this);
+            p = PreferenceManager.getDefaultSharedPreferences(this);
+            ScrollView scroll = new ScrollView(this);
+            scroll.setBackgroundColor(LibraryActivity.BG);
+            body = new LinearLayout(this);
+            body.setOrientation(LinearLayout.VERTICAL);
+            int pad = dp(16);
+            body.setPadding(pad, dp(22), pad, pad);
+            scroll.addView(body);
+            setContentView(scroll);
+            draw();
+        } catch (Throwable t) {
+            android.util.Log.e("KenjiSpace", "settings", t);
+            TextView err = new TextView(this);
+            err.setText("Настройки (натив). Не открылись: " + t.getMessage()
+                    + "\n\nВернитесь на полку — HTML/WebView здесь нет.");
+            err.setTextColor(LibraryActivity.TEXT);
+            err.setPadding(dp(16), dp(32), dp(16), dp(16));
+            err.setBackgroundColor(LibraryActivity.BG);
+            setContentView(err);
+        }
     }
 
     private void draw() {
+        try {
+            drawInner();
+        } catch (Throwable t) {
+            android.util.Log.e("KenjiSpace", "settings-draw", t);
+            heading("Настройки");
+            muted("часть экрана не собралась: " + t.getMessage());
+        }
+    }
+
+    private void drawInner() {
         body.removeAllViews();
         heading("Настройки");
         muted("те же ключи, что читает Kenji при запуске игры");
@@ -98,13 +118,13 @@ public class SettingsActivity extends Activity {
         section("Память");
         rowBtn("DRAM 4 ГиБ", new View.OnClickListener() {
             @Override public void onClick(View v) {
-                p.edit().putInt("memoryConfiguration", 0).commit();
+                SafePrefs.putInt(p, "memoryConfiguration", 0);
                 toast("DRAM 4 ГиБ");
             }
         });
         rowBtn("Host Unchecked", new View.OnClickListener() {
             @Override public void onClick(View v) {
-                p.edit().putInt("memoryManagerMode", 2).commit();
+                SafePrefs.putInt(p, "memoryManagerMode", 2);
                 toast("Memory Manager: Host Unchecked");
             }
         });
@@ -135,11 +155,15 @@ public class SettingsActivity extends Activity {
         t.setTextColor(LibraryActivity.TEXT);
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         t.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1));
-        Switch sw = new Switch(this);
-        sw.setChecked(p.getBoolean(key, def));
-        sw.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            @Override public void onCheckedChanged(CompoundButton b, boolean on) {
-                p.edit().putBoolean(key, on).commit();
+        final boolean on0 = SafePrefs.bool(p, key, def);
+        final Button sw = new Button(this);
+        sw.setAllCaps(false);
+        paintToggle(sw, on0);
+        sw.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                boolean next = !SafePrefs.bool(p, key, def);
+                SafePrefs.putBool(p, key, next);
+                paintToggle(sw, next);
             }
         });
         top.addView(t);
@@ -151,6 +175,15 @@ public class SettingsActivity extends Activity {
         h.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         row.addView(h);
         body.addView(row);
+    }
+
+    private void paintToggle(Button sw, boolean on) {
+        sw.setText(on ? "вкл" : "выкл");
+        sw.setTextColor(on ? LibraryActivity.BG : LibraryActivity.TEXT);
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(on ? LibraryActivity.CYAN : LibraryActivity.CARD);
+        d.setCornerRadius(dp(8));
+        sw.setBackground(d);
     }
 
     private void heading(String s) {
@@ -203,7 +236,7 @@ public class SettingsActivity extends Activity {
     private void scaleRow(double[] scales) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        float current = p.getFloat("resScale", 1f);
+        float current = SafePrefs.dec(p, "resScale", 1f);
         for (final double s : scales) {
             Button b = new Button(this);
             b.setText(s + "×");

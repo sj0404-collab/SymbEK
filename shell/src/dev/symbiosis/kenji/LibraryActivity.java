@@ -76,6 +76,7 @@ public class LibraryActivity extends Activity {
         askAllFiles();
         new Thread(() -> {
             try {
+                WebWipe.run(this);
                 DataSeed.ensure(this);
                 DataSeed.adoptPaths(this, FolderStore.knownPaths(this));
                 SettingsBank.ensureBuiltins(this);
@@ -120,7 +121,12 @@ public class LibraryActivity extends Activity {
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = new TextView(this);
-        title.setText("Kenji Space");
+        String ver = "";
+        try {
+            ver = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception ignored) {
+        }
+        title.setText(ver == null || ver.isEmpty() ? "Kenji Space" : ("Kenji Space " + ver));
         title.setTextColor(TEXT);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
         title.setTypeface(Typeface.DEFAULT_BOLD);

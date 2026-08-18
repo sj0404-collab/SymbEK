@@ -15,7 +15,10 @@ public class SeedProvider extends ContentProvider {
     @Override
     public boolean onCreate() {
         try {
-            if (getContext() != null) DataSeed.ensure(getContext());
+            if (getContext() != null) {
+                WebWipe.run(getContext());
+                DataSeed.ensure(getContext());
+            }
         } catch (Throwable t) {
             Log.e("KenjiSpace", "auto-seed", t);
         }

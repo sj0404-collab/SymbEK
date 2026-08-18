@@ -129,7 +129,7 @@ jobs:
           for i in 1 2 3 4 5; do
             if gh release create latest Kenji-Space.apk \
               --title "Kenji Space ${KENJI_VERSION_NAME}" \
-              --notes "Только нативная полка, без HTML/React/WebView и без их Compose-дома (он зависал на Loading). Игра — GameHost 2.1.0-pr.2 по нажатию. Прошивка ярлыками, без копии. Укажите «Данные» если нет ключей. Версия ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
+              --notes "Натив. Настройки больше не падают (чужой тип resScale). WebView-кэш чистится при старте. Версия на полке. Без HTML. ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
             then
               exit 0
             fi

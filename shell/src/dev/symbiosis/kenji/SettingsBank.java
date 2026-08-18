@@ -88,7 +88,7 @@ public final class SettingsBank {
     /** Built-in graphics presets — written once, then listed like user ones. */
     public static void ensureBuiltins(Context c) {
         SharedPreferences p = named(c);
-        if (p.getBoolean("builtins_v3", false)) return;
+        if (SafePrefs.bool(p, "builtins_v3", false)) return;
         try {
             String[][] pack = new String[][]{
                     {"по умолчанию", "1.0", "0", "false"},
@@ -131,10 +131,9 @@ public final class SettingsBank {
     }
 
     public static String applyScale(Context c, double scale, boolean docked) {
-        official(c).edit()
-                .putFloat("resScale", (float) scale)
-                .putBoolean("enableDocked", docked)
-                .commit();
+        SharedPreferences p = official(c);
+        SafePrefs.putFloat(p, "resScale", (float) scale);
+        SafePrefs.putBool(p, "enableDocked", docked);
         try {
             return new JSONObject()
                     .put("ok", true)
@@ -168,13 +167,13 @@ public final class SettingsBank {
         try {
             SharedPreferences p = official(c);
             JSONArray toggles = new JSONArray();
-            toggles.put(tog("enablePptc", "PPTC", "кэш профилей", p.getBoolean("enablePptc", true)));
-            toggles.put(tog("useNce", "NCE", "на этом Mali лучше выкл", p.getBoolean("useNce", false)));
-            toggles.put(tog("enableDocked", "Docked", "телевизионный режим", p.getBoolean("enableDocked", false)));
+            toggles.put(tog("enablePptc", "PPTC", "кэш профилей", SafePrefs.bool(p, "enablePptc", true)));
+            toggles.put(tog("useNce", "NCE", "на этом Mali лучше выкл", SafePrefs.bool(p, "useNce", false)));
+            toggles.put(tog("enableDocked", "Docked", "телевизионный режим", SafePrefs.bool(p, "enableDocked", false)));
             return new JSONObject()
                     .put("toggles", toggles)
-                    .put("resolution", p.getFloat("resScale", 1f))
-                    .put("cpuLabel", p.getBoolean("useNce", false) ? "NCE" : "JIT")
+                    .put("resolution", SafePrefs.dec(p, "resScale", 1f))
+                    .put("cpuLabel", SafePrefs.bool(p, "useNce", false) ? "NCE" : "JIT")
                     .toString();
         } catch (Exception e) {
             return "{\"toggles\":[]}";
@@ -182,7 +181,7 @@ public final class SettingsBank {
     }
 
     public static String setBool(Context c, String key, boolean on) {
-        official(c).edit().putBoolean(key, on).commit();
+        SafePrefs.putBool(official(c), key, on);
         try {
             return new JSONObject().put("ok", true).put("message", key + (on ? " вкл" : " выкл")).toString();
         } catch (Exception e) {
@@ -208,32 +207,32 @@ public final class SettingsBank {
     private static JSONObject snapshot(Context c) throws Exception {
         SharedPreferences p = official(c);
         return new JSONObject()
-                .put("enablePptc", p.getBoolean("enablePptc", true))
-                .put("useNce", p.getBoolean("useNce", false))
-                .put("enableDocked", p.getBoolean("enableDocked", false))
-                .put("enableLowPowerPptc", p.getBoolean("enableLowPowerPptc", false))
-                .put("enableJitCacheEviction", p.getBoolean("enableJitCacheEviction", false))
-                .put("enableFsIntegrityChecks", p.getBoolean("enableFsIntegrityChecks", false))
-                .put("ignoreMissingServices", p.getBoolean("ignoreMissingServices", false))
-                .put("memoryConfiguration", p.getInt("memoryConfiguration", 0))
-                .put("memoryManagerMode", p.getInt("memoryManagerMode", 2))
-                .put("enableShaderCache", p.getBoolean("enableShaderCache", true))
-                .put("resScale", (double) p.getFloat("resScale", 1f));
+                .put("enablePptc", SafePrefs.bool(p, "enablePptc", true))
+                .put("useNce", SafePrefs.bool(p, "useNce", false))
+                .put("enableDocked", SafePrefs.bool(p, "enableDocked", false))
+                .put("enableLowPowerPptc", SafePrefs.bool(p, "enableLowPowerPptc", false))
+                .put("enableJitCacheEviction", SafePrefs.bool(p, "enableJitCacheEviction", false))
+                .put("enableFsIntegrityChecks", SafePrefs.bool(p, "enableFsIntegrityChecks", false))
+                .put("ignoreMissingServices", SafePrefs.bool(p, "ignoreMissingServices", false))
+                .put("memoryConfiguration", SafePrefs.integer(p, "memoryConfiguration", 0))
+                .put("memoryManagerMode", SafePrefs.integer(p, "memoryManagerMode", 2))
+                .put("enableShaderCache", SafePrefs.bool(p, "enableShaderCache", true))
+                .put("resScale", (double) SafePrefs.dec(p, "resScale", 1f));
     }
 
     private static void writeOfficial(Context c, JSONObject s) {
-        official(c).edit()
-                .putBoolean("enablePptc", s.optBoolean("enablePptc", true))
-                .putBoolean("useNce", s.optBoolean("useNce", false))
-                .putBoolean("enableDocked", s.optBoolean("enableDocked", false))
-                .putBoolean("enableLowPowerPptc", s.optBoolean("enableLowPowerPptc", false))
-                .putBoolean("enableJitCacheEviction", s.optBoolean("enableJitCacheEviction", false))
-                .putBoolean("enableFsIntegrityChecks", s.optBoolean("enableFsIntegrityChecks", false))
-                .putBoolean("ignoreMissingServices", s.optBoolean("ignoreMissingServices", false))
-                .putInt("memoryConfiguration", s.optInt("memoryConfiguration", 0))
-                .putInt("memoryManagerMode", s.optInt("memoryManagerMode", 2))
-                .putFloat("resScale", (float) s.optDouble("resScale", 1.0))
-                .commit();
+        SharedPreferences p = official(c);
+        SafePrefs.putBool(p, "enablePptc", s.optBoolean("enablePptc", true));
+        SafePrefs.putBool(p, "useNce", s.optBoolean("useNce", false));
+        SafePrefs.putBool(p, "enableDocked", s.optBoolean("enableDocked", false));
+        SafePrefs.putBool(p, "enableLowPowerPptc", s.optBoolean("enableLowPowerPptc", false));
+        SafePrefs.putBool(p, "enableJitCacheEviction", s.optBoolean("enableJitCacheEviction", false));
+        SafePrefs.putBool(p, "enableFsIntegrityChecks", s.optBoolean("enableFsIntegrityChecks", false));
+        SafePrefs.putBool(p, "ignoreMissingServices", s.optBoolean("ignoreMissingServices", false));
+        SafePrefs.putBool(p, "enableShaderCache", s.optBoolean("enableShaderCache", true));
+        SafePrefs.putInt(p, "memoryConfiguration", s.optInt("memoryConfiguration", 0));
+        SafePrefs.putInt(p, "memoryManagerMode", s.optInt("memoryManagerMode", 2));
+        SafePrefs.putFloat(p, "resScale", (float) s.optDouble("resScale", 1.0));
     }
 
     private static void addNamed(JSONArray items, String raw) {
