@@ -1,6 +1,8 @@
 # Kenji Space
 
-Официальный Kenji-NX **2.1.0-pr.2** целиком (GameHost, три DEX, все 18 `.so`). Иконка открывает **полку**: обложки, запуск нажатием, пресеты графики. Игра идёт в их `MainActivity`.
+Официальный Kenji-NX **2.1.0-pr.2** целиком (GameHost, три DEX, все 18 `.so`). Иконка открывает **нативную полку** (`LibraryActivity`): обложки, запуск нажатием, пресеты графики. Игра идёт в их `MainActivity`.
+
+Нет HTML, нет React, нет WebView. UI — только Android View (`LibraryActivity`, `SettingsActivity`, `GamePropsActivity`).
 
 Пакет `dev.symbiosis.kenji`. Рядом с `org.kenjinx.android` и Eden.
 

@@ -98,8 +98,11 @@ jobs:
           unzip -l Kenji-Space.apk | grep -E 'lib/arm64-v8a/lib(kenjinx|kenjinxjni|avcodec|skiasharp)\.so'
           unzip -l Kenji-Space.apk | grep 'classes3.dex'
           unzip -l Kenji-Space.apk | grep 'classes4.dex'
-          ! unzip -l Kenji-Space.apk | grep -q 'assets/www/index.html'
-          unzip -l Kenji-Space.apk | grep 'classes4.dex'
+          if unzip -l Kenji-Space.apk | grep -qiE '\.(html|htm|jsx|tsx)$|assets/www/'; then
+            echo "::error::в APK остался HTML/React"
+            unzip -l Kenji-Space.apk | grep -iE '\.(html|htm|jsx|tsx)$|assets/www/' || true
+            exit 1
+          fi
           test "$(stat -c%s Kenji-Space.apk)" -gt 45000000
 
           echo "MD5=$(md5sum Kenji-Space.apk | cut -d' ' -f1)"
@@ -126,7 +129,7 @@ jobs:
           for i in 1 2 3 4 5; do
             if gh release create latest Kenji-Space.apk \
               --title "Kenji Space ${KENJI_VERSION_NAME}" \
-              --notes "Полка с обложками и запуском нажатием. Игра — официальный GameHost 2.1.0-pr.2. Прошивка без копии: ярлыки bis/{id}.nca/00 → Eden nand или чужой Kenji bis. 11 графических пресетов. Источник прошивки виден в статусе и system/firmware_source.txt. Пакет dev.symbiosis.kenji. Версия ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
+              --notes "Нативная полка (Java Activity), без HTML и без React. Игра — официальный GameHost 2.1.0-pr.2. Прошивка без копии: ярлыки bis/{id}.nca/00 → Eden nand. 11 графических пресетов. Пакет dev.symbiosis.kenji. Версия ${KENJI_VERSION_NAME} (code ${KENJI_VERSION_CODE}). MD5 ${MD5} · ${SIZE} байт"
             then
               exit 0
             fi

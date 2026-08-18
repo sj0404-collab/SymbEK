@@ -14,9 +14,20 @@ for arg in sys.argv[2:]:
     if p.suffix == ".dex" or p.name == "classes.dex":
         DEX = p
 
-www = ROOT / "assets" / "www"
-if www.exists():
-    shutil.rmtree(www)
+# Official tree must not keep a web UI. Drop HTML/React leftovers.
+for folder in (
+    ROOT / "assets" / "www",
+    ROOT / "assets" / "web",
+    ROOT / "assets" / "react",
+):
+    if folder.exists():
+        shutil.rmtree(folder)
+removed = 0
+for p in ROOT.rglob("*"):
+    if p.is_file() and p.suffix.lower() in {".html", ".htm", ".jsx", ".tsx", ".vue"}:
+        p.unlink()
+        removed += 1
+print("stripped web ui,", removed, "files")
 
 if DEX and DEX.is_file():
     shutil.copy2(DEX, ROOT / "classes4.dex")
