@@ -33,28 +33,18 @@ class PickActivity : Activity() {
             } catch (_: Exception) {
             }
             val path = treeToPath(uri)
-            val kind = intent.getStringExtra("kind") ?: "games"
-            if (path == null) {
+            val kind = intent.getStringExtra("kind") ?: "eden"
+            if (kind == "games") {
+                val e = android.preference.PreferenceManager.getDefaultSharedPreferences(this).edit()
+                e.putString("gameFolder", uri.toString())
+                if (path != null) e.putString("gameFolderPath", path)
+                e.commit()
+                Toast.makeText(this, "папка игр: ${path ?: uri}", Toast.LENGTH_LONG).show()
+            } else if (path != null) {
+                if (kind == "kenji") DataSeed.setKenjiDir(this, path) else DataSeed.setEdenDir(this, path)
+                Toast.makeText(this, "$kind: $path", Toast.LENGTH_LONG).show()
+            } else {
                 Toast.makeText(this, "не смог разобрать путь папки", Toast.LENGTH_LONG).show()
-            } else when (kind) {
-                "games" -> {
-                    FolderHub.addGamesDir(this, path)
-                    FolderHub.applyAfterFolderChange(this)
-                    Toast.makeText(this, "игры: $path", Toast.LENGTH_LONG).show()
-                }
-                "saves" -> {
-                    FolderHub.setSaves(this, path)
-                    Toast.makeText(this, "сейвы: $path", Toast.LENGTH_LONG).show()
-                }
-                "kenji" -> {
-                    DataSeed.setKenjiDir(this, path)
-                    FolderHub.applyAfterFolderChange(this)
-                    Toast.makeText(this, "Kenji: $path", Toast.LENGTH_LONG).show()
-                }
-                else -> {
-                    FolderHub.setEden(this, path)
-                    Toast.makeText(this, "Eden/files: $path", Toast.LENGTH_LONG).show()
-                }
             }
         }
         finish()
