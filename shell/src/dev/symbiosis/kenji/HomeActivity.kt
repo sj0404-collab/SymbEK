@@ -149,9 +149,18 @@ class HomeActivity : Activity() {
                     null
                 }
                 covers[g.path] = bmp
-                main.post { if (tab != 2) paint() }
+                main.post { applyCover(g.path, bmp) }
             }
         }, "covers").start()
+    }
+
+    private fun applyCover(path: String, bmp: Bitmap?) {
+        val list = filtered()
+        val rom = list.getOrNull(if (list.isEmpty()) 0 else index.coerceIn(0, list.lastIndex))
+        if (rom != null && rom.path == path && bmp != null) {
+            coverView?.scaleType = ImageView.ScaleType.CENTER_CROP
+            coverView?.setImageBitmap(bmp)
+        }
     }
 
     private fun filtered(): List<GameRom> {
@@ -163,13 +172,23 @@ class HomeActivity : Activity() {
     }
 
     private fun paint() {
-        body.removeAllViews()
-        val page = when (tab) {
-            1 -> listPage()
-            2 -> settingsPage()
-            else -> launcherPage()
+        try {
+            body.removeAllViews()
+            val page = when (tab) {
+                1 -> listPage()
+                2 -> settingsPage()
+                else -> launcherPage()
+            }
+            body.addView(page, FrameLayout.LayoutParams(-1, -1))
+        } catch (t: Throwable) {
+            android.util.Log.e("KenjiSpace", "paint tab=$tab", t)
+            body.removeAllViews()
+            val err = TextView(this)
+            err.setTextColor(TEXT)
+            err.setPadding(dp(16), dp(16), dp(16), dp(16))
+            err.text = "экран не собрался: ${t.javaClass.simpleName}\n${t.message}"
+            body.addView(err)
         }
-        body.addView(page, FrameLayout.LayoutParams(-1, -1))
     }
 
     private fun launcherPage(): View {
@@ -368,42 +387,61 @@ class HomeActivity : Activity() {
         val scroll = ScrollView(this)
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
-        val keys = DataSeed.keysOk(this)
-        val nca = DataSeed.firmwareNca(this)
-        box.addView(infoCard(buildString {
-            append(if (keys) "Ключи ✓" else "Ключи ✗")
-            append(" · ")
-            append(if (nca >= 5) "Прошивка ✓ $nca NCA" else "Прошивка ✗")
-            append(" · игр ${games.size}\n")
-            append(DataSeed.playHome(this@HomeActivity).absolutePath)
-        }))
-        box.addView(section("Папки — можно сменить на любые. Список и прошивка пересоберутся."))
-        box.addView(pathRow("Игры (NSP/XCI)", FolderHub.gamesDirs(this).joinToString("\n") { it.absolutePath }.ifBlank { "не задано" }) { pick("games") })
-        box.addView(pathRow("Eden/files (ключи + прошивка)", FolderHub.edenPath(this)) { pick("eden") })
-        box.addView(pathRow("Сейвы", FolderHub.savesDir(this).absolutePath) { pick("saves") })
-        FolderHub.gamesDirs(this).forEach { f ->
-            box.addView(pill("убрать ${f.name}", false) {
-                FolderHub.removeGamesDir(this, f.absolutePath)
-                reload(true)
-            }, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
-        }
-        box.addView(pill("Починить всё", true) {
-            Toast.makeText(this, "чиню…", Toast.LENGTH_SHORT).show()
-            Thread({
-                FolderHub.applyAfterFolderChange(this)
-                main.post {
-                    reload(true)
-                    Toast.makeText(this, "готово · ${DataSeed.firmwareNca(this)} NCA", Toast.LENGTH_LONG).show()
+        try {
+            val keys = DataSeed.keysOk(this)
+            val nca = DataSeed.firmwareNca(this)
+            box.addView(infoCard(buildString {
+                append(if (keys) "Ключи ✓" else "Ключи ✗")
+                append(" · ")
+                append(if (nca >= 5) "Прошивка ✓ $nca NCA" else "Прошивка ✗")
+                append(" · игр ${games.size}\n")
+                append(DataSeed.playHome(this@HomeActivity).absolutePath)
+            }))
+            box.addView(section("Папки — можно сменить на любые. Список и прошивка пересоберутся."))
+            val gamesPath = FolderHub.gamesDirs(this).joinToString("\n") { it.absolutePath }.ifBlank { "не задано" }
+            box.addView(pathRow("Игры (NSP/XCI)", gamesPath) { pick("games") })
+            box.addView(pathRow("Eden/files (ключи + прошивка)", FolderHub.edenPath(this)) { pick("eden") })
+            box.addView(pathRow("Сейвы", FolderHub.savesDir(this).absolutePath) { pick("saves") })
+            FolderHub.gamesDirs(this).forEach { f ->
+                box.addView(
+                    pill("убрать ${f.name}", false) {
+                        FolderHub.removeGamesDir(this, f.absolutePath)
+                        reload(true)
+                    },
+                    LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) },
+                )
+            }
+            box.addView(
+                pill("Починить всё", true) {
+                    Toast.makeText(this, "чиню…", Toast.LENGTH_SHORT).show()
+                    Thread({
+                        FolderHub.applyAfterFolderChange(this)
+                        main.post {
+                            reload(true)
+                            Toast.makeText(this, "готово · ${DataSeed.firmwareNca(this)} NCA", Toast.LENGTH_LONG).show()
+                        }
+                    }, "fix").start()
+                },
+                LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(12) },
+            )
+            box.addView(section("Пресеты (пишутся в настройки Kenji)"))
+            try {
+                SettingsBank.ensureCatalog(this)
+                SettingsBank.listNamed(this).forEach { name ->
+                    val n = name
+                    box.addView(
+                        pill(n, false) {
+                            Toast.makeText(this, SettingsBank.applyNamed(this, n), Toast.LENGTH_SHORT).show()
+                        },
+                        LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) },
+                    )
                 }
-            }, "fix").start()
-        }, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(12) })
-        box.addView(section("Пресеты (пишутся в настройки Kenji)"))
-        SettingsBank.ensureCatalog(this)
-        SettingsBank.listNamed(this).forEach { name ->
-            val n = name
-            box.addView(pill(n, false) {
-                Toast.makeText(this, SettingsBank.applyNamed(this, n), Toast.LENGTH_SHORT).show()
-            }, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
+            } catch (t: Throwable) {
+                box.addView(section("пресеты не прочитались: ${t.message}"))
+            }
+        } catch (t: Throwable) {
+            android.util.Log.e("KenjiSpace", "settings", t)
+            box.addView(section("настройки: ${t.message}"))
         }
         scroll.addView(box)
         return scroll
@@ -511,9 +549,10 @@ class HomeActivity : Activity() {
         box.addView(a)
         box.addView(b)
         box.setOnClickListener { click() }
-        return LinearLayout(this).also {
-            it.addView(box, LinearLayout.LayoutParams(-1, -2).also { lp -> lp.topMargin = dp(8) })
-        }.getChildAt(0)
+        val lp = LinearLayout.LayoutParams(-1, -2)
+        lp.topMargin = dp(8)
+        box.layoutParams = lp
+        return box
     }
 
     private fun pick(kind: String) {
