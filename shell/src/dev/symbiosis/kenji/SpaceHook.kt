@@ -116,6 +116,21 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             waitGame = false
             return false
         }
+        // Settings / empty shelf must never keep the bar. 1.0.88 still armed
+        // waitGame on any tap in the middle of Kenji settings.
+        if (looksLikeSettings(content) || looksLikeSettings(activity.window?.decorView)) {
+            waitGame = false
+            return false
+        }
+        val shelf = looksLikeLibrary(content) || looksLikeLibrary(activity.window?.decorView)
+        val official = officialLoaderVisible() || scrapeLoadingTitle() != null
+        if (shelf && !official) {
+            if (age > 1600L) {
+                waitGame = false
+                BootLog.add("индикатор снят — тап без загрузки")
+            }
+            return false
+        }
         return true
     }
 
@@ -193,6 +208,18 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         findText(root, "карточка игры") || findText(root, "журнал запуска") ||
             findText(root, "настройки игры")
 
+    private fun looksLikeSettings(root: View?): Boolean {
+        if (root == null) return false
+        val keys = arrayOf(
+            "Install Firmware", "Ignore Missing Services", "Memory Manager",
+            "Memory Configuration", "Shader Cache", "Low Power PPTC",
+            "Jit Cache", "Fs Integrity", "System Settings", "Quick Settings",
+            "Install Keys", "prod.keys (Kenji",
+        )
+        for (k in keys) if (findText(root, k)) return true
+        return false
+    }
+
     private fun looksLikeLibrary(root: View?): Boolean {
         if (root == null) return false
         // Do not match our own panel text ("Kenji Space") — that made the
@@ -254,7 +281,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
 
     internal fun allWindowsPublic(): List<View> = allWindows()
     internal fun isSpaceView(v: View): Boolean = ours(v)
-    internal fun isLibraryWindow(v: View): Boolean = looksLikeLibrary(v) || isOurDialog(v)
+    internal fun isLibraryWindow(v: View): Boolean =
+        looksLikeLibrary(v) || isOurDialog(v) || looksLikeSettings(v)
 
     private fun allWindows(): List<View> {
         return try {
@@ -343,6 +371,10 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                 android.util.Log.e("KenjiSpace", "overlay", t)
             }
         }
+        val space = activity.getSharedPreferences("kenji_space", Context.MODE_PRIVATE)
+        if (space.getBoolean("need_shelf_reload", false) && !inGame(activity)) {
+            FastScan.reloadShelf(activity, force = true)
+        }
         if (!seeded && !inGame(activity)) {
             seeded = true
             Thread({
@@ -355,6 +387,9 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     activity.runOnUiThread {
                         (activity.findViewById<ViewGroup>(android.R.id.content)
                             ?.findViewWithTag<View>(TAG) as? Panel)?.refresh()
+                        // Kenji reads gameFolder in onCreate. Writing it later
+                        // left an empty shelf — that was the silence.
+                        if (FastScan.wroteFolder) FastScan.reloadShelf(activity, force = false)
                     }
                 } catch (t: Throwable) {
                     android.util.Log.e("KenjiSpace", "bg", t)
@@ -561,6 +596,9 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     private fun onGameGrid(activity: Activity, ev: MotionEvent): Boolean {
         if (onOurChrome(activity, ev)) return false
         val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return false
+        val decor = activity.window?.decorView
+        if (looksLikeSettings(content) || looksLikeSettings(decor)) return false
+        if (!looksLikeLibrary(content) && !looksLikeLibrary(decor)) return false
         val h = content.height
         if (h <= 0) return false
         val panel = content.findViewWithTag<View>(TAG)
@@ -610,7 +648,11 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     moved = false
                     grid = onGameGrid(host, ev)
                     val content = host.findViewById<ViewGroup>(android.R.id.content)
-                    if (content != null && !inGame(host) && !onOurChrome(host, ev) && !launching(host, content)) {
+                    val decor = host.window?.decorView
+                    val onShelf = content != null &&
+                        (looksLikeLibrary(content) || looksLikeLibrary(decor)) &&
+                        !looksLikeSettings(content) && !looksLikeSettings(decor)
+                    if (content != null && onShelf && !inGame(host) && !onOurChrome(host, ev) && !launching(host, content)) {
                         sx = ev.rawX
                         sy = ev.rawY
                         val run = Runnable {
@@ -1078,6 +1120,16 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
 
         private fun scanDisk() {
+            if (!AccessFix.hasAllFiles()) {
+                status.text = "нужен доступ ко всем файлам — включите и нажмите ещё раз"
+                AccessFix.askAllFiles(host)
+                Toast.makeText(
+                    host,
+                    "включите доступ ко всем файлам и нажмите «Найти на диске» ещё раз",
+                    Toast.LENGTH_LONG,
+                ).show()
+                return
+            }
             status.text = "ищу игры на диске…"
             Thread({
                 val r = try {
@@ -1091,6 +1143,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                 host.runOnUiThread {
                     refresh()
                     Toast.makeText(host, r.line(), Toast.LENGTH_LONG).show()
+                    FastScan.reloadShelf(host, force = true)
                 }
             }, "fast-scan").start()
         }

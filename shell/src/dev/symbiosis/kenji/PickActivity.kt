@@ -39,6 +39,8 @@ class PickActivity : Activity() {
                 e.putString("gameFolder", uri.toString())
                 if (path != null) e.putString("gameFolderPath", path)
                 e.commit()
+                getSharedPreferences("kenji_space", MODE_PRIVATE)
+                    .edit().putBoolean("need_shelf_reload", true).commit()
                 Toast.makeText(this, "папка игр: ${path ?: uri}", Toast.LENGTH_LONG).show()
             } else if (path != null) {
                 if (kind == "kenji") DataSeed.setKenjiDir(this, path) else DataSeed.setEdenDir(this, path)

@@ -21,13 +21,15 @@ object FastScan {
         val saves: List<File>,
         val ms: Long,
         val dirsWalked: Int,
+        val allFiles: Boolean,
     ) {
         fun line(): String {
+            val perm = if (allFiles) "" else "НЕТ доступа ко всем файлам · "
             val g = if (gameDirs.isEmpty()) "игр нет" else "${gameDirs.size} папок · $roms ROM"
             val k = if (keys.isEmpty()) "ключей нет" else "ключи ${keys.size}"
             val f = if (firmware.isEmpty()) "прошивки нет" else "прошивка ${firmware.size}"
             val s = if (saves.isEmpty()) "сейвов нет" else "сейвы ${saves.size}"
-            return "$g · $k · $f · $s · ${ms} мс / $dirsWalked папок"
+            return "$perm$g · $k · $f · $s · ${ms} мс / $dirsWalked папок"
         }
     }
 
@@ -35,6 +37,9 @@ object FastScan {
         private set
 
     @Volatile var lastLine: String = "сканер ещё не работал"
+        private set
+
+    @Volatile var wroteFolder: Boolean = false
         private set
 
     private val SKIP = setOf(
@@ -72,7 +77,7 @@ object FastScan {
         }
 
         var walked = 0
-        while (q.isNotEmpty() && walked < 280 && SystemClock.uptimeMillis() - t0 < 1800L) {
+        while (q.isNotEmpty() && walked < 400 && SystemClock.uptimeMillis() - t0 < 2500L) {
             val (dir, depth) = q.removeFirst()
             val key = dir.absolutePath
             if (!seen.add(key)) continue
@@ -98,7 +103,7 @@ object FastScan {
             if (looksFw) firmware.add(dir)
             if (looksSave) saves.add(dir)
 
-            if (depth >= 4) continue
+            if (depth >= 5) continue
             for (k in kids) {
                 if (!k.isDirectory) continue
                 val name = k.name
@@ -133,6 +138,7 @@ object FastScan {
             saves = saves.distinctBy { it.absolutePath },
             ms = SystemClock.uptimeMillis() - t0,
             dirsWalked = walked,
+            allFiles = AccessFix.hasAllFiles(),
         )
         last = report
         lastLine = report.line()
@@ -142,14 +148,49 @@ object FastScan {
         return report
     }
 
+    fun reloadShelf(activity: android.app.Activity, force: Boolean) {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(activity)
+        val folder = prefs.getString("gameFolder", "") ?: ""
+        if (folder.isBlank()) return
+        val space = activity.getSharedPreferences("kenji_space", Context.MODE_PRIVATE)
+        val last = space.getString("shelf_folder", "")
+        if (!force && last == folder) return
+        space.edit().putString("shelf_folder", folder).putBoolean("need_shelf_reload", false).commit()
+        BootLog.add("полка: перечитываю $folder")
+        activity.runOnUiThread {
+            try {
+                if (!SpaceHook.isPlaying()) activity.recreate()
+            } catch (t: Throwable) {
+                Log.e("KenjiSpace", "recreate", t)
+            }
+        }
+    }
+
+    private fun folderHasRoms(path: String): Boolean {
+        if (path.isBlank()) return false
+        if (path.startsWith("content:")) return true
+        val dir = File(path)
+        if (!dir.isDirectory) return false
+        return dir.listFiles()?.any { f ->
+            val n = f.name.lowercase(Locale.US)
+            f.isFile && ROM_EXT.any { n.endsWith(it) }
+        } == true
+    }
+
     private fun apply(context: Context, report: Report) {
+        wroteFolder = false
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
-        if (prefs.getString("gameFolder", "").isNullOrBlank() && report.gameDirs.isNotEmpty()) {
+        val current = prefs.getString("gameFolder", "") ?: ""
+        val pathHint = prefs.getString("gameFolderPath", "") ?: ""
+        val currentOk = folderHasRoms(current) || folderHasRoms(pathHint)
+        if (report.gameDirs.isNotEmpty() && (current.isBlank() || !currentOk)) {
             val best = report.gameDirs.first()
             prefs.edit()
                 .putString("gameFolder", best.absolutePath)
                 .putString("gameFolderPath", best.absolutePath)
                 .commit()
+            wroteFolder = true
+            BootLog.add("gameFolder → ${best.absolutePath}")
         }
         if (DataSeed.edenDir(context) == null) {
             val fromKeys = report.keys.firstOrNull()?.let { f ->
