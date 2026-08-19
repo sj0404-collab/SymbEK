@@ -110,18 +110,18 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
         if (waitGame) {
             val age = android.os.SystemClock.elapsedRealtime() - tappedAt
-            if (age > 120_000L && activity.hasWindowFocus() && looksLikeLibrary(content)) {
+            if (age > 120_000L && looksLikeLibrary(content)) {
                 waitGame = false
                 return false
             }
             return true
         }
-        if (!activity.hasWindowFocus()) {
+        val title = scrapeLoadingTitle()
+        if (title != null && looksGameLoad(title)) {
             waitGame = true
             return true
         }
-        val title = scrapeLoadingTitle()
-        if ((title != null && looksGameLoad(title)) || officialGameDialog()) {
+        if (officialGameDialog()) {
             waitGame = true
             return true
         }
@@ -148,27 +148,22 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     private fun officialGameDialog(): Boolean {
         if (playing) return false
         for (root in allWindows()) {
-            if (ours(root) || isOurDialog(root)) continue
+            if (ours(root) || isOurDialog(root) || isSystemPrompt(root)) continue
             if (hasGameSurface(root)) continue
             if (findOfficialLoader(root, 0)) return true
             if (isKenjiLoadWindow(root)) return true
-            if (isExtraDialogWindow(root)) return true
         }
         return false
     }
 
-    /** Compose Loading is often one MATCH_PARENT window with no TextView children. */
-    private fun isExtraDialogWindow(root: View): Boolean {
-        val lp = root.layoutParams as? WindowManager.LayoutParams ?: return false
-        val type = lp.type
-        val dialogish = type == WindowManager.LayoutParams.TYPE_APPLICATION ||
-            type == WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG ||
-            type == WindowManager.LayoutParams.TYPE_APPLICATION_PANEL ||
-            type == WindowManager.LayoutParams.TYPE_APPLICATION_SUB_PANEL
-        if (!dialogish) return false
-        val title = lp.title?.toString().orEmpty()
-        if (title.contains("kenji-space", ignoreCase = true)) return false
-        return true
+    private fun isSystemPrompt(root: View): Boolean {
+        val keys = arrayOf(
+            "Разрешить", "Запретить", "Allow", "Deny", "Don't allow",
+            "уведомлен", "notification", "хранить", "storage",
+            "Все файлы", "All files", "доступ",
+        )
+        for (k in keys) if (findText(root, k)) return true
+        return false
     }
 
     private fun isKenjiLoadWindow(root: View): Boolean {
