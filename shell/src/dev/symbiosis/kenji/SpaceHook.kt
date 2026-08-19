@@ -108,24 +108,15 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             waitGame = false
             return false
         }
-        if (waitGame) {
-            val age = android.os.SystemClock.elapsedRealtime() - tappedAt
-            if (age > 120_000L && looksLikeLibrary(content)) {
-                waitGame = false
-                return false
-            }
-            return true
+        // Only a cover tap (beginGameLoad) may arm the bar. System settings,
+        // notification sheets and Kenji's own gear used to look like Loading.
+        if (!waitGame) return false
+        val age = android.os.SystemClock.elapsedRealtime() - tappedAt
+        if (age > 120_000L) {
+            waitGame = false
+            return false
         }
-        val title = scrapeLoadingTitle()
-        if (title != null && looksGameLoad(title)) {
-            waitGame = true
-            return true
-        }
-        if (officialGameDialog()) {
-            waitGame = true
-            return true
-        }
-        return false
+        return true
     }
 
     private fun looksGameLoad(title: String): Boolean {
@@ -357,6 +348,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             Thread({
                 try {
                     AccessFix.repair(activity)
+                    if (AccessFix.hasAllFiles()) FastScan.run(activity)
                     DataSeed.ensure(activity)
                     SettingsBank.applyDefaultOnce(activity)
                     SettingsBank.enableFps(activity)
@@ -572,7 +564,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         val h = content.height
         if (h <= 0) return false
         val panel = content.findViewWithTag<View>(TAG)
-        val top = (panel?.height ?: 0) + dp(activity, 64)
+        // Skip Kenji home / gear / search row so settings never arm the load bar.
+        val top = (panel?.height ?: 0) + dp(activity, 108)
         val bot = h - dp(activity, 92)
         return ev.y > top && ev.y < bot
     }
@@ -969,6 +962,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             bridges.orientation = VERTICAL
             bridges.addView(rowBtn("Папка Eden/files (оригинал прошивки)") { pick("eden") })
             bridges.addView(rowBtn("Папка игр (+)") { pick("games") })
+            bridges.addView(rowBtn("Найти на диске") { scanDisk() })
             journalBtn = rowBtn("Журнал запуска") { showJournal() }
             journalBtn.visibility = GONE
             bridges.addView(journalBtn)
@@ -1081,6 +1075,24 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             i.setClassName(host.packageName, "dev.symbiosis.kenji.PickActivity")
             i.putExtra("kind", kind)
             host.startActivity(i)
+        }
+
+        private fun scanDisk() {
+            status.text = "ищу игры на диске…"
+            Thread({
+                val r = try {
+                    FastScan.run(host)
+                } catch (t: Throwable) {
+                    host.runOnUiThread {
+                        Toast.makeText(host, "сканер: ${t.message}", Toast.LENGTH_LONG).show()
+                    }
+                    return@Thread
+                }
+                host.runOnUiThread {
+                    refresh()
+                    Toast.makeText(host, r.line(), Toast.LENGTH_LONG).show()
+                }
+            }, "fast-scan").start()
         }
 
         private fun fillPresets() {
