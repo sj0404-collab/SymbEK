@@ -8,10 +8,9 @@ import android.view.WindowManager
 import android.widget.TextView
 
 /**
- * Kenji's Loading / shader-check is a FULLSCREEN extra window with
- * FLAG_SECURE. We skipped fullscreen, so it covered everything and
- * blocked screenshots. Neutralize that window (alpha 0, no secure,
- * not touchable). Never alpha-0 the activity decor (that's the game).
+ * 1.0.95 set alpha=0 on Kenji's fullscreen window / Compose siblings.
+ * The game is Skia/Compose, not SurfaceView — audio ran, picture was white.
+ * Now: only strip FLAG_SECURE. Do not hide any fullscreen or content view.
  */
 object LoadOverlay {
     @Volatile private var lastBury = 0L
@@ -21,11 +20,15 @@ object LoadOverlay {
     }
 
     fun onGameFps(activity: Activity) {
-        ghostLoader(activity)
+        clearSecure(activity)
+        restoreGameViews(activity)
     }
 
     fun hide(activity: Activity? = null) {
-        if (activity != null) clearSecure(activity)
+        if (activity != null) {
+            clearSecure(activity)
+            restoreGameViews(activity)
+        }
     }
 
     fun buryKenji(activity: Activity) {
@@ -34,24 +37,12 @@ object LoadOverlay {
 
     fun ghostLoader(activity: Activity) {
         val now = SystemClock.uptimeMillis()
-        if (now - lastBury < 250L) return
+        if (now - lastBury < 400L) return
         lastBury = now
         clearSecure(activity)
-        try {
-            val decor = activity.window?.decorView
-            val content = activity.findViewById<ViewGroup>(android.R.id.content)
-            for (root in SpaceHook.allWindowsPublic()) {
-                if (root === decor) continue
-                if (SpaceHook.isSpaceView(root)) continue
-                if (isPrompt(root)) continue
-                if (SpaceHook.hasGameSurface(root)) continue
-                neutralizeWindow(activity, root)
-            }
-            if ((SpaceHook.isPlaying() || SpaceHook.isBooting()) && content != null) {
-                muteCoveringSiblings(content)
-            }
-        } catch (_: Throwable) {
-        }
+        restoreGameViews(activity)
+        if (SpaceHook.isPlaying()) return
+        hideSmallLoadingPopups(activity)
     }
 
     fun clearSecure(activity: Activity) {
@@ -73,6 +64,10 @@ object LoadOverlay {
                     flags = flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv()
                     changed = true
                 }
+                if (lp.alpha == 0f) {
+                    lp.alpha = 1f
+                    changed = true
+                }
                 if (changed) {
                     lp.flags = flags
                     activity.windowManager.updateViewLayout(root, lp)
@@ -82,43 +77,63 @@ object LoadOverlay {
         }
     }
 
-    private fun neutralizeWindow(activity: Activity, root: View) {
+    /** Undo 1.0.95 alpha=0 on the game Compose view. */
+    fun restoreGameViews(activity: Activity) {
         try {
-            root.alpha = 0f
-            val lp = root.layoutParams as? WindowManager.LayoutParams ?: return
-            lp.alpha = 0f
-            lp.dimAmount = 0f
-            lp.flags = (lp.flags
-                or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) and
-                WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv() and
-                WindowManager.LayoutParams.FLAG_SECURE.inv()
-            activity.windowManager.updateViewLayout(root, lp)
+            val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
+            for (i in 0 until content.childCount) {
+                val v = content.getChildAt(i)
+                if (SpaceHook.isSpaceView(v)) continue
+                if (v.alpha < 1f) v.alpha = 1f
+            }
+            val decor = activity.window?.decorView
+            if (decor != null && decor.alpha < 1f) decor.alpha = 1f
+            for (root in SpaceHook.allWindowsPublic()) {
+                if (SpaceHook.isSpaceView(root)) continue
+                if (root.alpha == 0f) root.alpha = 1f
+            }
         } catch (_: Throwable) {
         }
     }
 
-    /** Full-size Kenji Compose overlay sitting on top of SurfaceView. */
-    private fun muteCoveringSiblings(content: ViewGroup) {
-        val dm = content.resources.displayMetrics
-        for (i in 0 until content.childCount) {
-            val v = content.getChildAt(i)
-            if (SpaceHook.isSpaceView(v)) continue
-            if (SpaceHook.hasGameSurface(v)) continue
-            if (v.width < dm.widthPixels * 7 / 10) continue
-            if (v.height < dm.heightPixels * 6 / 10) continue
-            if (v.alpha == 0f) continue
-            v.alpha = 0f
-            v.isClickable = false
-            v.isFocusable = false
+    private fun hideSmallLoadingPopups(activity: Activity) {
+        try {
+            val decor = activity.window?.decorView
+            val dm = activity.resources.displayMetrics
+            for (root in SpaceHook.allWindowsPublic()) {
+                if (root === decor) continue
+                if (SpaceHook.isSpaceView(root)) continue
+                if (SpaceHook.hasGameSurface(root)) continue
+                if (isPrompt(root)) continue
+                if (root.width >= dm.widthPixels * 7 / 10) continue
+                if (root.height >= dm.heightPixels * 6 / 10) continue
+                if (root.width <= 0 || root.height <= 0) continue
+                val w = root.width / dm.density
+                val h = root.height / dm.density
+                if (w !in 90f..520f || h !in 40f..360f) continue
+                if (!looksLoading(root)) continue
+                try {
+                    val lp = root.layoutParams as? WindowManager.LayoutParams ?: continue
+                    lp.dimAmount = 0f
+                    lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv() and
+                        WindowManager.LayoutParams.FLAG_SECURE.inv()
+                    activity.windowManager.updateViewLayout(root, lp)
+                    root.alpha = 0f
+                } catch (_: Throwable) {
+                }
+            }
+        } catch (_: Throwable) {
         }
+    }
+
+    private fun looksLoading(root: View): Boolean {
+        return hasText(root, "Loading") || hasText(root, "Загрузка")
     }
 
     private fun isPrompt(root: View): Boolean {
         val keys = arrayOf(
             "Разрешить", "Запретить", "Allow", "Deny", "Don't allow",
             "уведомлен", "notification", "Install Firmware", "System Settings",
-            "Quick Settings", "Ignore Missing Services",
         )
         for (k in keys) if (hasText(root, k)) return true
         return false

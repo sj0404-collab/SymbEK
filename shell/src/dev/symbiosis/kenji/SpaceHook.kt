@@ -110,6 +110,13 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             waitGame = false
             return false
         }
+        // Skia/Compose game has no SurfaceView. Audio already runs.
+        // Stay out of "busy" so we never alpha-0 the picture.
+        if (emulationRunning(activity)) {
+            playing = true
+            waitGame = false
+            return false
+        }
         if (looksLikeSettings(content) || looksLikeSettings(activity.window?.decorView)) {
             waitGame = false
             return false
@@ -516,9 +523,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud?.visibility = View.VISIBLE
             hud?.start()
             unshiftOfficial(content, panel)
-            // Shader Loading is a fullscreen extra window with FLAG_SECURE.
-            // Keep killing it in-game or screenshots stay dead.
-            LoadOverlay.ghostLoader(activity)
+            LoadOverlay.hide(activity)
         } else if (busy) {
             waitGame = true
             panel?.collapse()
