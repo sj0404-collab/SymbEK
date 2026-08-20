@@ -61,6 +61,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     fun isPlaying(): Boolean = playing
+    fun isBooting(): Boolean = waitGame && !playing
 
     fun inGame(ctx: Context): Boolean {
         val act = ctx as? Activity ?: return false
@@ -442,7 +443,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     applyMode(activity)
                 } catch (_: Throwable) {
                 }
-                val gap = if (playing) 4000 else if (waitGame) 500 else 2000
+                val gap = if (playing) 800 else if (waitGame) 300 else 2000
                 main.postAtTime(this, activity, android.os.SystemClock.uptimeMillis() + gap)
             }
         }
@@ -515,8 +516,9 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud?.visibility = View.VISIBLE
             hud?.start()
             unshiftOfficial(content, panel)
-            // Do not walk/ghost Kenji views in-game — that made screenshots
-            // fail and the UI glitch until exit.
+            // Shader Loading is a fullscreen extra window with FLAG_SECURE.
+            // Keep killing it in-game or screenshots stay dead.
+            LoadOverlay.ghostLoader(activity)
         } else if (busy) {
             waitGame = true
             panel?.collapse()
