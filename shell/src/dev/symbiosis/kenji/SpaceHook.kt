@@ -523,7 +523,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud?.visibility = View.VISIBLE
             hud?.start()
             unshiftOfficial(content, panel)
-            LoadOverlay.hide(activity)
+            LoadOverlay.ghostLoader(activity)
         } else if (busy) {
             waitGame = true
             panel?.collapse()
@@ -1194,6 +1194,10 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             return x >= loc[0] && x < loc[0] + v.width && y >= loc[1] && y < loc[1] + v.height
         }
 
+        override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+            if (visibility != View.VISIBLE) return false
+            return if (hitsChrome(ev)) super.dispatchTouchEvent(ev) else false
+        }
         override fun onTouchEvent(event: MotionEvent): Boolean = false
         override fun onInterceptTouchEvent(ev: MotionEvent): Boolean = false
 
