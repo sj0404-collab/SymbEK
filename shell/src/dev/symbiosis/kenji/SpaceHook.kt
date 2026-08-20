@@ -442,7 +442,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     applyMode(activity)
                 } catch (_: Throwable) {
                 }
-                val gap = if (playing) 2500 else if (waitGame) 250 else 1500
+                val gap = if (playing) 2500 else if (waitGame || LoadOverlay.hasShelfLoader()) 200 else 1500
                 main.postAtTime(this, activity, android.os.SystemClock.uptimeMillis() + gap)
             }
         }
@@ -531,6 +531,9 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud?.visibility = View.GONE
             hud?.stop()
             load?.stop()
+            // Kenji puts "Loading" + hourglass on the shelf (reload / icon
+            // decode) without opening GameHost. Ghost that card.
+            LoadOverlay.ghostLoader(activity)
             if (panel != null) panel.post { shiftOfficial(content, panel) }
         }
     }

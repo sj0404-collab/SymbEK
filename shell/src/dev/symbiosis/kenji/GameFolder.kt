@@ -110,11 +110,8 @@ object GameFolder {
     fun reloadKenji(activity: Activity) {
         BootLog.add("полка: reload")
         activity.runOnUiThread {
-            try {
-                invokeReload(activity)
-            } catch (t: Throwable) {
-                Log.w("KenjiSpace", "reloadGameList", t)
-            }
+            // Do not call reloadGameList — Kenji shows a modal Loading card
+            // on the shelf without opening GameHost.
             try {
                 if (!SpaceHook.isPlaying()) activity.recreate()
             } catch (t: Throwable) {
