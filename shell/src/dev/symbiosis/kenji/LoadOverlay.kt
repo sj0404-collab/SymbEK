@@ -8,12 +8,9 @@ import android.view.WindowManager
 import android.widget.TextView
 
 /**
- * Layers:
- *   content = game + gamepad (never alpha-0)
- *   extra window = Kenji Loading / shaders (hide, don't restore while in game)
- *
- * 1.0.95 muted content → white. 1.0.96 restored extra windows → Loading
- * back on top of the game. Hide only extra Loading windows.
+ * The clock overlay sits ON the game. Never blank content. Never hide
+ * fullscreen extra windows (that is often the Skia game / pad).
+ * Only: strip FLAG_SECURE, restore content alpha, hide small "Loading" cards.
  */
 object LoadOverlay {
     @Volatile private var lastBury = 0L
@@ -36,11 +33,11 @@ object LoadOverlay {
 
     fun ghostLoader(activity: Activity) {
         val now = SystemClock.uptimeMillis()
-        if (now - lastBury < 300L) return
+        if (now - lastBury < 400L) return
         lastBury = now
         clearSecure(activity)
-        restoreContentOnly(activity)
-        hideKenjiLoadingWindows(activity)
+        restoreContentAlpha(activity)
+        hideSmallLoadingCards(activity)
     }
 
     fun clearSecure(activity: Activity) {
@@ -62,7 +59,6 @@ object LoadOverlay {
                     flags = flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv()
                     changed = true
                 }
-                // Do not force lp.alpha = 1 — that brings Loading back.
                 if (changed) {
                     lp.flags = flags
                     activity.windowManager.updateViewLayout(root, lp)
@@ -72,8 +68,7 @@ object LoadOverlay {
         }
     }
 
-    /** Only the activity content (game / gamepad). Not extra windows. */
-    private fun restoreContentOnly(activity: Activity) {
+    private fun restoreContentAlpha(activity: Activity) {
         try {
             val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
             for (i in 0 until content.childCount) {
@@ -85,51 +80,40 @@ object LoadOverlay {
         }
     }
 
-    /**
-     * Extra WM windows only. Fullscreen Loading / shader check lives here.
-     * Decor = the game — never touch it.
-     */
-    private fun hideKenjiLoadingWindows(activity: Activity) {
+    private fun hideSmallLoadingCards(activity: Activity) {
         try {
             val decor = activity.window?.decorView
+            val dm = activity.resources.displayMetrics
             for (root in SpaceHook.allWindowsPublic()) {
                 if (root === decor) continue
                 if (SpaceHook.isSpaceView(root)) continue
                 if (SpaceHook.hasGameSurface(root)) continue
                 if (isPrompt(root)) continue
-                if (isOurUi(root)) continue
-                neutralizeExtra(activity, root)
+                if (root.width >= dm.widthPixels * 7 / 10) continue
+                if (root.height >= dm.heightPixels * 6 / 10) continue
+                if (root.width <= 0 || root.height <= 0) continue
+                val w = root.width / dm.density
+                val h = root.height / dm.density
+                if (w !in 90f..520f || h !in 40f..320f) continue
+                if (!hasText(root, "Loading") && !hasText(root, "Загрузка")) continue
+                try {
+                    val lp = root.layoutParams as? WindowManager.LayoutParams ?: continue
+                    lp.dimAmount = 0f
+                    lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv() and
+                        WindowManager.LayoutParams.FLAG_SECURE.inv()
+                    activity.windowManager.updateViewLayout(root, lp)
+                    root.alpha = 0f
+                } catch (_: Throwable) {
+                }
             }
         } catch (_: Throwable) {
         }
-    }
-
-    private fun neutralizeExtra(activity: Activity, root: View) {
-        try {
-            root.alpha = 0f
-            val lp = root.layoutParams as? WindowManager.LayoutParams ?: return
-            lp.alpha = 0f
-            lp.dimAmount = 0f
-            lp.flags = (lp.flags
-                or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) and
-                WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv() and
-                WindowManager.LayoutParams.FLAG_SECURE.inv()
-            activity.windowManager.updateViewLayout(root, lp)
-        } catch (_: Throwable) {
-        }
-    }
-
-    private fun isOurUi(root: View): Boolean {
-        return hasText(root, "карточка игры") || hasText(root, "журнал запуска") ||
-            hasText(root, "Kenji Space")
     }
 
     private fun isPrompt(root: View): Boolean {
         val keys = arrayOf(
             "Разрешить", "Запретить", "Allow", "Deny", "Don't allow",
             "уведомлен", "notification", "Install Firmware", "System Settings",
-            "Quick Settings", "Ignore Missing Services",
         )
         for (k in keys) if (hasText(root, k)) return true
         return false

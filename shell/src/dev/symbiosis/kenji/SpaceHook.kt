@@ -110,13 +110,9 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             waitGame = false
             return false
         }
-        // Skia/Compose game has no SurfaceView. Audio already runs.
-        // Stay out of "busy" so we never alpha-0 the picture.
-        if (emulationRunning(activity)) {
-            playing = true
-            waitGame = false
-            return false
-        }
+        // Do not set playing from EmulationService alone — that swapped
+        // to PlayHud on a black window while the game stayed elsewhere.
+        // Hourglass overlay stays on Kenji's layer until a real surface.
         if (looksLikeSettings(content) || looksLikeSettings(activity.window?.decorView)) {
             waitGame = false
             return false
@@ -1092,6 +1088,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         init {
             isClickable = false
             isFocusable = false
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
             cb = Choreographer.FrameCallback { ns ->
                 if (!running) return@FrameCallback
                 frames++
