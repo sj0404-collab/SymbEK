@@ -375,21 +375,40 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         if (space.getBoolean("need_shelf_reload", false) && !inGame(activity)) {
             FastScan.reloadShelf(activity, force = true)
         }
+        val allFiles = AccessFix.hasAllFiles()
+        val scanned = space.getBoolean("scanned_all_files", false)
+        if (allFiles && !scanned && !inGame(activity) && seeded) {
+            space.edit().putBoolean("scanned_all_files", true).commit()
+            Thread({
+                try {
+                    FastScan.run(activity)
+                    activity.runOnUiThread {
+                        (activity.findViewById<ViewGroup>(android.R.id.content)
+                            ?.findViewWithTag<View>(TAG) as? Panel)?.refresh()
+                        FastScan.reloadShelf(activity, force = true)
+                    }
+                } catch (t: Throwable) {
+                    android.util.Log.e("KenjiSpace", "scan2", t)
+                }
+            }, "fast-scan-grant").start()
+        }
         if (!seeded && !inGame(activity)) {
             seeded = true
             Thread({
                 try {
                     AccessFix.repair(activity)
-                    if (AccessFix.hasAllFiles()) FastScan.run(activity)
+                    if (AccessFix.hasAllFiles()) {
+                        activity.getSharedPreferences("kenji_space", Context.MODE_PRIVATE)
+                            .edit().putBoolean("scanned_all_files", true).commit()
+                        FastScan.run(activity)
+                    }
                     DataSeed.ensure(activity)
                     SettingsBank.applyDefaultOnce(activity)
                     SettingsBank.enableFps(activity)
                     activity.runOnUiThread {
                         (activity.findViewById<ViewGroup>(android.R.id.content)
                             ?.findViewWithTag<View>(TAG) as? Panel)?.refresh()
-                        // Kenji reads gameFolder in onCreate. Writing it later
-                        // left an empty shelf — that was the silence.
-                        if (FastScan.wroteFolder) FastScan.reloadShelf(activity, force = false)
+                        if (FastScan.wroteFolder) FastScan.reloadShelf(activity, force = true)
                     }
                 } catch (t: Throwable) {
                     android.util.Log.e("KenjiSpace", "bg", t)

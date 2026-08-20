@@ -35,10 +35,14 @@ class PickActivity : Activity() {
             val path = treeToPath(uri)
             val kind = intent.getStringExtra("kind") ?: "eden"
             if (kind == "games") {
-                val e = android.preference.PreferenceManager.getDefaultSharedPreferences(this).edit()
-                e.putString("gameFolder", uri.toString())
-                if (path != null) e.putString("gameFolderPath", path)
-                e.commit()
+                if (path != null) {
+                    GameFolder.write(this, File(path))
+                } else {
+                    val e = android.preference.PreferenceManager.getDefaultSharedPreferences(this).edit()
+                    e.putString("gameFolder", uri.toString())
+                    e.putString("defaultGameFolderUri", uri.toString())
+                    e.commit()
+                }
                 getSharedPreferences("kenji_space", MODE_PRIVATE)
                     .edit().putBoolean("need_shelf_reload", true).commit()
                 Toast.makeText(this, "папка игр: ${path ?: uri}", Toast.LENGTH_LONG).show()

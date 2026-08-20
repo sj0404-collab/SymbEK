@@ -135,7 +135,12 @@ object FastScan {
             }
         }
 
-        val gameDirs = romsByDir.entries.sortedByDescending { it.value }.map { File(it.key) }
+        val gameDirs = romsByDir.entries
+            .sortedWith(
+                compareByDescending<Map.Entry<String, Int>> { it.value }
+                    .thenByDescending { it.key.length },
+            )
+            .map { File(it.key) }
         val roms = romsByDir.values.sum()
         val report = Report(
             gameDirs = gameDirs,
@@ -156,50 +161,41 @@ object FastScan {
     }
 
     fun reloadShelf(activity: android.app.Activity, force: Boolean) {
-        val prefs = PreferenceManager.getDefaultSharedPreferences(activity)
-        val folder = prefs.getString("gameFolder", "") ?: ""
+        val folder = GameFolder.currentPath(activity).ifBlank {
+            android.preference.PreferenceManager.getDefaultSharedPreferences(activity)
+                .getString("gameFolder", "") ?: ""
+        }
         if (folder.isBlank()) return
         val space = activity.getSharedPreferences("kenji_space", Context.MODE_PRIVATE)
         val last = space.getString("shelf_folder", "")
         if (!force && last == folder) return
         space.edit().putString("shelf_folder", folder).putBoolean("need_shelf_reload", false).commit()
-        BootLog.add("полка: перечитываю $folder")
-        activity.runOnUiThread {
-            try {
-                if (!SpaceHook.isPlaying()) activity.recreate()
-            } catch (t: Throwable) {
-                Log.e("KenjiSpace", "recreate", t)
-            }
-        }
-    }
-
-    private fun folderHasRoms(path: String): Boolean {
-        if (path.isBlank()) return false
-        if (path.startsWith("content:")) return true
-        val dir = File(path)
-        if (!dir.isDirectory) return false
-        return dir.listFiles()?.any { f ->
-            val n = f.name.lowercase(Locale.US)
-            f.isFile && ROM_EXT.any { n.endsWith(it) }
-        } == true
+        GameFolder.reloadKenji(activity)
     }
 
     private fun apply(context: Context, report: Report) {
         wroteFolder = false
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         val current = prefs.getString("gameFolder", "") ?: ""
-        val pathHint = prefs.getString("gameFolderPath", "") ?: ""
-        val currentOk = folderHasRoms(current) || folderHasRoms(pathHint)
-        if (report.gameDirs.isNotEmpty() && (current.isBlank() || !currentOk)) {
-            val best = report.gameDirs.first()
-            prefs.edit()
-                .putString("gameFolder", best.absolutePath)
-                .putString("gameFolderPath", best.absolutePath)
-                .commit()
-            wroteFolder = true
-            BootLog.add("gameFolder → ${best.absolutePath}")
+        val granted = current.startsWith("content:") &&
+            context.contentResolver.persistedUriPermissions.any { p ->
+                val u = p.uri.toString()
+                u == current || current.startsWith(u)
+            }
+        if (granted) {
+            val pathHint = prefs.getString("gameFolderPath", "") ?: ""
+            if (pathHint.isBlank() && report.gameDirs.isNotEmpty()) {
+                prefs.edit().putString("gameFolderPath", report.gameDirs.first().absolutePath).commit()
+            }
+        } else {
+            val currentOk = GameFolder.hasRoms(GameFolder.currentPath(context))
+            if (report.gameDirs.isNotEmpty() && !currentOk) {
+                val best = report.gameDirs.first()
+                if (GameFolder.write(context, best)) wroteFolder = true
+            }
         }
         if (DataSeed.edenDir(context) == null) {
+
             val fromKeys = report.keys.firstOrNull()?.let { f ->
                 val p = f.parentFile ?: return@let null
                 when {

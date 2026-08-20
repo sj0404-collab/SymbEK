@@ -84,7 +84,7 @@ object AccessFix {
                 f.isFile && (n.endsWith(".nsp") || n.endsWith(".xci") || n.endsWith(".nro"))
             } == true
             if (hasRom) {
-                prefs.edit().putString("gameFolder", dir.absolutePath).commit()
+                GameFolder.write(context, dir)
                 return
             }
         }
