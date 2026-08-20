@@ -506,7 +506,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
         val game = playing || surface
         val busy = !playing && launching(activity, content)
-        DataSeed.allowEnsure = !game
+        DataSeed.allowEnsure = !game && !busy
         val panel = content.findViewWithTag<View>(TAG) as? Panel
         val hud = content.findViewWithTag<View>(TAG_HUD) as? PlayHud
         val load = content.findViewWithTag<View>(TAG_LOAD) as? BounceClock
@@ -519,7 +519,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud?.visibility = View.VISIBLE
             hud?.start()
             unshiftOfficial(content, panel)
-            LoadOverlay.ghostLoader(activity)
+            LoadOverlay.clearSecureCheap(activity)
         } else if (busy) {
             waitGame = true
             panel?.collapse()
@@ -532,15 +532,15 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             } else {
                 load?.stop()
             }
-            LoadOverlay.ghostLoader(activity)
+            LoadOverlay.hideKenjiLoadingOnce(activity)
             unshiftOfficial(content, panel)
         } else {
             waitGame = false
+            LoadOverlay.reset()
             panel?.visibility = View.VISIBLE
             hud?.visibility = View.GONE
             hud?.stop()
             load?.stop()
-            LoadOverlay.ghostLoader(activity)
             if (panel != null) panel.post { shiftOfficial(content, panel) }
         }
     }
