@@ -1,20 +1,22 @@
 package dev.symbiosis.kenji
 
 import android.app.Activity
+import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.TextView
 
 /**
- * Do not walk WindowManager every tick during boot — that made launch 40s.
- * Hide Kenji's Loading extra-window once. Never touch content (game/pad).
+ * Kenji's player spinner is a modal extra window: full screen, FLAG_SECURE,
+ * eats touches, then dismisses when the game is up. Hide that window while
+ * booting. Never touch activity content (game + pad). Cheap: mViews only.
  */
 object LoadOverlay {
-    @Volatile private var hiddenOnce = false
+    @Volatile private var last = 0L
 
     fun show(activity: Activity, title: String) {
-        hideKenjiLoadingOnce(activity)
+        hideBlockingLoader(activity)
     }
 
     fun onGameFps(activity: Activity) {
@@ -26,16 +28,18 @@ object LoadOverlay {
     }
 
     fun buryKenji(activity: Activity) {
-        hideKenjiLoadingOnce(activity)
+        hideBlockingLoader(activity)
     }
 
     fun ghostLoader(activity: Activity) {
-        hideKenjiLoadingOnce(activity)
+        hideBlockingLoader(activity)
     }
 
-    fun reset() {
-        hiddenOnce = false
+    fun hideKenjiLoadingOnce(activity: Activity) {
+        hideBlockingLoader(activity)
     }
+
+    fun reset() {}
 
     fun clearSecureCheap(activity: Activity) {
         try {
@@ -44,32 +48,48 @@ object LoadOverlay {
         }
     }
 
-    fun hideKenjiLoadingOnce(activity: Activity) {
-        if (hiddenOnce) return
-        hiddenOnce = true
+    fun hideBlockingLoader(activity: Activity) {
+        val now = SystemClock.uptimeMillis()
+        if (now - last < 900L) return
+        last = now
         clearSecureCheap(activity)
+        if (SpaceHook.isPlaying()) return
         try {
             val decor = activity.window?.decorView
             for (root in SpaceHook.allWindowsPublic()) {
                 if (root === decor) continue
                 if (SpaceHook.isSpaceView(root)) continue
                 if (SpaceHook.hasGameSurface(root)) continue
-                if (!hasText(root, "Loading") && !hasText(root, "Загрузка")) continue
-                try {
-                    root.alpha = 0f
-                    val lp = root.layoutParams as? WindowManager.LayoutParams ?: continue
-                    lp.alpha = 0f
-                    lp.dimAmount = 0f
-                    lp.flags = (lp.flags
-                        or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) and
-                        WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv() and
-                        WindowManager.LayoutParams.FLAG_SECURE.inv()
-                    activity.windowManager.updateViewLayout(root, lp)
-                } catch (_: Throwable) {
-                }
+                if (isPrompt(root)) continue
+                blockExtra(activity, root)
             }
         } catch (_: Throwable) {
         }
+    }
+
+    private fun blockExtra(activity: Activity, root: View) {
+        try {
+            root.alpha = 0f
+            val lp = root.layoutParams as? WindowManager.LayoutParams ?: return
+            lp.alpha = 0f
+            lp.dimAmount = 0f
+            lp.flags = (lp.flags
+                or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) and
+                WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv() and
+                WindowManager.LayoutParams.FLAG_SECURE.inv()
+            activity.windowManager.updateViewLayout(root, lp)
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun isPrompt(root: View): Boolean {
+        val keys = arrayOf(
+            "Разрешить", "Запретить", "Allow", "Deny", "Don't allow",
+            "уведомлен", "notification", "Install Firmware", "System Settings",
+        )
+        for (k in keys) if (hasText(root, k)) return true
+        return false
     }
 
     private fun hasText(v: View, needle: String): Boolean {

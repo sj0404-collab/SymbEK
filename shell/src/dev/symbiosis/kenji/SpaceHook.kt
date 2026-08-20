@@ -446,7 +446,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     applyMode(activity)
                 } catch (_: Throwable) {
                 }
-                val gap = if (playing) 800 else if (waitGame) 300 else 2000
+                val gap = if (playing) 2500 else if (waitGame) 1000 else 2000
                 main.postAtTime(this, activity, android.os.SystemClock.uptimeMillis() + gap)
             }
         }
@@ -532,7 +532,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             } else {
                 load?.stop()
             }
-            LoadOverlay.hideKenjiLoadingOnce(activity)
+            LoadOverlay.hideBlockingLoader(activity)
             unshiftOfficial(content, panel)
         } else {
             waitGame = false
