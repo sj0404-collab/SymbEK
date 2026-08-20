@@ -442,7 +442,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     applyMode(activity)
                 } catch (_: Throwable) {
                 }
-                val gap = if (playing) 2500 else if (waitGame || LoadOverlay.hasShelfLoader()) 200 else 1500
+                val gap = if (playing) 4000 else if (waitGame) 500 else 2000
                 main.postAtTime(this, activity, android.os.SystemClock.uptimeMillis() + gap)
             }
         }
@@ -515,14 +515,20 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud?.visibility = View.VISIBLE
             hud?.start()
             unshiftOfficial(content, panel)
+            // Do not walk/ghost Kenji views in-game — that made screenshots
+            // fail and the UI glitch until exit.
         } else if (busy) {
             waitGame = true
             panel?.collapse()
             panel?.visibility = View.GONE
             hud?.visibility = View.GONE
             hud?.stop()
-            load?.visibility = View.VISIBLE
-            load?.start()
+            if (BounceClock.enabled(activity)) {
+                load?.visibility = View.VISIBLE
+                load?.start()
+            } else {
+                load?.stop()
+            }
             LoadOverlay.ghostLoader(activity)
             unshiftOfficial(content, panel)
         } else {
@@ -531,8 +537,6 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud?.visibility = View.GONE
             hud?.stop()
             load?.stop()
-            // Kenji puts "Loading" + hourglass on the shelf (reload / icon
-            // decode) without opening GameHost. Ghost that card.
             LoadOverlay.ghostLoader(activity)
             if (panel != null) panel.post { shiftOfficial(content, panel) }
         }
@@ -865,6 +869,18 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             bridges.addView(rowBtn("Папка Eden/files (оригинал прошивки)") { pick("eden") })
             bridges.addView(rowBtn("Папка игр (+)") { pick("games") })
             bridges.addView(rowBtn("Найти на диске") { scanDisk() })
+            var clockBtn: Button? = null
+            clockBtn = rowBtn(if (BounceClock.enabled(host)) "Часы ожидания · вкл" else "Часы ожидания · выкл") {
+                val on = !BounceClock.enabled(host)
+                BounceClock.setEnabled(host, on)
+                clockBtn?.text = if (on) "Часы ожидания · вкл" else "Часы ожидания · выкл"
+                Toast.makeText(
+                    host,
+                    if (on) "часы вкл · тап скрыть, дёрнуть — рикошет" else "часы выкл",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            bridges.addView(clockBtn)
             journalBtn = rowBtn("Журнал запуска") { showJournal() }
             journalBtn.visibility = GONE
             bridges.addView(journalBtn)
