@@ -62,11 +62,18 @@ object FastScan {
         val q = ArrayDeque<Pair<File, Int>>()
         val sd = Environment.getExternalStorageDirectory()
         listOf(
-            File(sd, "Download"),
             File(sd, "Download/ed"),
+            File(sd, "Download"),
             File(sd, "Switch"),
             File(sd, "Games"),
             File(sd, "NSP"),
+            File(sd, "XCI"),
+            File(sd, "roms"),
+            File(sd, "Eden"),
+            File(sd, "Ryujinx"),
+            File(sd, "Yuzu"),
+            File(sd, "Sudachi"),
+            File(sd, "Kenji"),
             sd,
         ).forEach { if (it.isDirectory) q.add(it to 0) }
         context.getExternalFilesDirs(null)?.forEach { ext ->

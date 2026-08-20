@@ -30,7 +30,8 @@ import java.io.File
 
 /**
  * Launcher: compact panel + add-folder inside it.
- * Loading: only our live bar; official Kenji dialog is hidden.
+ * Loading: one bouncing clock, no dim, no percent bar.
+ * Clock only while EmulationService runs — never in settings.
  * In-game: hideable FAB, red stats, bottom overlay (pause, not stop).
  */
 object SpaceHook : Application.ActivityLifecycleCallbacks {
@@ -108,30 +109,38 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             waitGame = false
             return false
         }
-        // Only a cover tap (beginGameLoad) may arm the bar. System settings,
-        // notification sheets and Kenji's own gear used to look like Loading.
-        if (!waitGame) return false
-        val age = android.os.SystemClock.elapsedRealtime() - tappedAt
-        if (age > 120_000L) {
-            waitGame = false
-            return false
-        }
-        // Settings / empty shelf must never keep the bar. 1.0.88 still armed
-        // waitGame on any tap in the middle of Kenji settings.
         if (looksLikeSettings(content) || looksLikeSettings(activity.window?.decorView)) {
             waitGame = false
             return false
         }
-        val shelf = looksLikeLibrary(content) || looksLikeLibrary(activity.window?.decorView)
-        val official = officialLoaderVisible() || scrapeLoadingTitle() != null
-        if (shelf && !official) {
-            if (age > 1600L) {
-                waitGame = false
-                BootLog.add("индикатор снят — тап без загрузки")
-            }
+        // Never arm from a tap. Compose settings have no TextView, so grid
+        // hit-tests used to fire in Kenji / Android settings. Clock only
+        // while our own EmulationService is up (or JNI already booting).
+        if (!emulationRunning(activity) && !kernelBooting()) {
+            waitGame = false
             return false
         }
+        waitGame = true
         return true
+    }
+
+    private fun emulationRunning(ctx: Context): Boolean {
+        return try {
+            val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            @Suppress("DEPRECATION")
+            val list = am.getRunningServices(64) ?: return false
+            list.any { info ->
+                val n = info.service?.className.orEmpty()
+                n.contains("EmulationService")
+            }
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun kernelBooting(): Boolean {
+        val blob = (BootLog.dump() + "\n" + BootLog.kernelDump()).lowercase(java.util.Locale.US)
+        return blob.contains("javainitialize") || blob.contains("deviceinitialize")
     }
 
     private fun looksGameLoad(title: String): Boolean {
@@ -309,16 +318,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     private fun plantLoader(host: Activity, vg: ViewGroup) {
-        var bar = vg.findViewWithTag<View>(TAG_INJECT) as? LoadBar
-        if (bar == null) {
-            bar = LoadBar(host)
-            bar.tag = TAG_INJECT
-            vg.addView(bar, ViewGroup.LayoutParams(-1, -1))
-        }
-        bar.visibility = View.VISIBLE
-        bar.bringToFront()
-        bar.elevation = 128f
-        bar.start(scrapeLoadingTitle() ?: "загрузка игры")
+        // Never plant a loader into other windows.
     }
 
     private fun stripInjected() {
@@ -405,6 +405,9 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         val content = activity.findViewById<ViewGroup>(android.R.id.content)
         (content?.findViewWithTag<View>(TAG) as? Panel)?.collapse()
         content?.findViewWithTag<View>(TAG)?.visibility = View.GONE
+        (content?.findViewWithTag<View>(TAG_LOAD) as? BounceClock)?.stop()
+        content?.findViewWithTag<View>(TAG_LOAD)?.visibility = View.GONE
+        waitGame = false
         if (content != null) unshiftOfficial(content, content.findViewWithTag(TAG))
     }
 
@@ -456,12 +459,11 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             hud.elevation = 26f
         }
         if (content.findViewWithTag<View>(TAG_LOAD) == null) {
-            val load = LoadBar(activity)
+            val load = BounceClock(activity)
             load.tag = TAG_LOAD
             load.visibility = View.GONE
             content.addView(load, FrameLayout.LayoutParams(-1, -1))
-            load.elevation = 96f
-            load.translationZ = 96f
+            load.elevation = 40f
         }
     }
 
@@ -481,35 +483,32 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         DataSeed.allowEnsure = !game
         val panel = content.findViewWithTag<View>(TAG) as? Panel
         val hud = content.findViewWithTag<View>(TAG_HUD) as? PlayHud
-        val load = content.findViewWithTag<View>(TAG_LOAD)
+        val load = content.findViewWithTag<View>(TAG_LOAD) as? BounceClock
         if (game) {
             playing = true
             waitGame = false
             panel?.collapse()
             panel?.visibility = View.GONE
-            (load as? LoadBar)?.stop()
-            load?.visibility = View.GONE
+            load?.stop()
             hud?.visibility = View.VISIBLE
             hud?.start()
             unshiftOfficial(content, panel)
-            LoadOverlay.buryKenji(activity)
         } else if (busy) {
             waitGame = true
             panel?.collapse()
             panel?.visibility = View.GONE
             hud?.visibility = View.GONE
             hud?.stop()
-            val title = scrapeLoadingTitle() ?: loadingTitle(content) ?: "загрузка игры"
             load?.visibility = View.VISIBLE
-            (load as? LoadBar)?.start(title)
-            LoadOverlay.buryKenji(activity)
+            load?.start()
+            LoadOverlay.ghostLoader(activity)
             unshiftOfficial(content, panel)
         } else {
+            waitGame = false
             panel?.visibility = View.VISIBLE
             hud?.visibility = View.GONE
             hud?.stop()
-            (load as? LoadBar)?.stop()
-            load?.visibility = View.GONE
+            load?.stop()
             if (panel != null) panel.post { shiftOfficial(content, panel) }
         }
     }
@@ -578,19 +577,6 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         val x = ev.rawX
         val y = ev.rawY
         return x >= loc[0] && x < loc[0] + v.width && y >= loc[1] && y < loc[1] + v.height
-    }
-
-    private fun beginGameLoad(activity: Activity, name: String = "загрузка игры") {
-        if (playing || inGame(activity)) return
-        waitGame = true
-        tappedAt = android.os.SystemClock.elapsedRealtime()
-        BootLog.add("тап по обложке → наш индикатор")
-        try {
-            applyMode(activity)
-            LoadOverlay.show(activity, name)
-            hideOfficialLoader(activity)
-        } catch (_: Throwable) {
-        }
     }
 
     private fun onGameGrid(activity: Activity, ev: MotionEvent): Boolean {
@@ -677,10 +663,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                         hold = false
                         return true
                     }
-                    val go = ev.actionMasked == MotionEvent.ACTION_UP && grid && !moved &&
-                        !inGame(host) && !playing
                     val handled = base.dispatchTouchEvent(ev)
-                    if (go) beginGameLoad(host)
                     return handled
                 }
             }
@@ -785,154 +768,6 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         b.isAllCaps = false
         b.setOnClickListener { click() }
         return b
-    }
-
-    class LoadBar(host: Activity) : FrameLayout(host) {
-        override fun onTouchEvent(event: MotionEvent): Boolean = true
-        override fun onInterceptTouchEvent(ev: MotionEvent): Boolean = true
-
-        private val titleView: TextView
-        private val meta: TextView
-        private val track: FrameLayout
-        private val fill: View
-        private val log: TextView
-        private var running = false
-        private var shown = 0f
-        private var title = "загрузка игры"
-        private var t0 = 0L
-        private val tick = object : Runnable {
-            override fun run() {
-                if (!running) return
-                val (target, step) = BootLog.stage()
-                val goal = target.toFloat()
-                shown += (goal - shown) * 0.14f
-                if (shown < goal) shown += 0.22f
-                if (shown > goal + 5f) shown = goal + 5f
-                val tw = track.width
-                if (tw > 0) {
-                    val w = ((tw - dp(4)) * (shown / 100f)).toInt().coerceAtLeast(dp(12))
-                    val p = fill.layoutParams
-                    if (p.width != w) {
-                        p.width = w
-                        fill.layoutParams = p
-                    }
-                }
-                val sec = if (t0 == 0L) 0L else (android.os.SystemClock.elapsedRealtime() - t0) / 1000L
-                meta.text = String.format("%d:%02d   ·   %d%%   ·   %s", sec / 60, sec % 60, shown.toInt(), step)
-                val live = BootLog.lastKernel().ifBlank { BootLog.tail(1) }
-                val tail = BootLog.tail(3)
-                log.text = listOf(step, live, tail).filter { it.isNotBlank() }.distinct().joinToString("\n")
-                main.postDelayed(this, 80)
-            }
-        }
-
-        init {
-            isClickable = false
-            isFocusable = false
-            setBackgroundColor(0xF20A0A0E.toInt())
-            val box = LinearLayout(host)
-            box.orientation = LinearLayout.VERTICAL
-            box.gravity = Gravity.CENTER_HORIZONTAL
-            val pad = dp(28)
-            box.setPadding(pad, 0, pad, 0)
-
-            titleView = TextView(host)
-            titleView.setTextColor(TEXT)
-            titleView.setTypeface(Typeface.DEFAULT_BOLD)
-            titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
-            titleView.gravity = Gravity.CENTER
-            titleView.text = "загрузка"
-            box.addView(titleView)
-
-            meta = TextView(host)
-            meta.setTextColor(MINT)
-            meta.setTypeface(Typeface.MONOSPACE)
-            meta.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            meta.gravity = Gravity.CENTER
-            meta.setPadding(0, dp(10), 0, dp(16))
-            meta.text = "0:00   ·   0%"
-            box.addView(meta)
-
-            track = FrameLayout(host)
-            val tg = GradientDrawable()
-            tg.setColor(0xFF2A2A32.toInt())
-            tg.cornerRadius = dp(6).toFloat()
-            track.background = tg
-            val tlp = LinearLayout.LayoutParams(dp(280), dp(8))
-            box.addView(track, tlp)
-            fill = View(host)
-            val fg = GradientDrawable()
-            fg.setColor(MINT)
-            fg.cornerRadius = dp(6).toFloat()
-            fill.background = fg
-            track.addView(fill, LayoutParams(dp(12), -1, Gravity.START or Gravity.CENTER_VERTICAL))
-
-            log = TextView(host)
-            log.setTextColor(0x88D0D0D8.toInt())
-            log.setTypeface(Typeface.MONOSPACE)
-            log.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-            log.gravity = Gravity.CENTER
-            log.setPadding(0, dp(18), 0, 0)
-            box.addView(log)
-
-            addView(box, LayoutParams(-1, -2, Gravity.CENTER))
-        }
-
-        fun start(now: String) {
-            val clean = now.replace('\n', ' ')
-                .replace("Loading", "", ignoreCase = true)
-                .replace("Загрузка", "", ignoreCase = true)
-                .trim()
-                .ifBlank { "игра" }
-            title = clean.take(48)
-            titleView.text = title
-            if (running) return
-            running = true
-            t0 = android.os.SystemClock.elapsedRealtime()
-            shown = 6f
-            main.removeCallbacks(tick)
-            main.post(tick)
-        }
-
-        fun completeThenFade(done: () -> Unit) {
-            running = false
-            main.removeCallbacks(tick)
-            shown = 100f
-            val tw = track.width
-            if (tw > 0) {
-                fill.layoutParams.width = tw - dp(4)
-                fill.requestLayout()
-            }
-            meta.text = String.format("%d:%02d   ·   100%%   ·   готово",
-                if (t0 == 0L) 0 else ((android.os.SystemClock.elapsedRealtime() - t0) / 1000L) / 60,
-                if (t0 == 0L) 0 else ((android.os.SystemClock.elapsedRealtime() - t0) / 1000L) % 60)
-            var a = 1f
-            val fade = object : Runnable {
-                override fun run() {
-                    a -= 0.07f
-                    alpha = a.coerceAtLeast(0f)
-                    if (a > 0f) {
-                        main.postDelayed(this, 32)
-                    } else {
-                        stop()
-                        done()
-                    }
-                }
-            }
-            main.postDelayed(fade, 220)
-        }
-
-        fun stop() {
-            running = false
-            main.removeCallbacks(tick)
-            shown = 0f
-            t0 = 0L
-            log.text = ""
-            alpha = 1f
-        }
-
-        private fun dp(v: Int): Int =
-            Math.round(v * resources.displayMetrics.density)
     }
 
     private class Panel(private val host: Activity) : LinearLayout(host) {
@@ -1055,6 +890,10 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             status.text = buildString {
                 append(keys).append(" · ").append(nca).append(" NCA · ").append(BootLog.human(bytes)).append('\n')
                 append(home.absolutePath).append('\n')
+                if (!AccessFix.hasAllFiles()) {
+                    append("нет доступа ко всем файлам — нажмите «Найти на диске»\n")
+                }
+                append(FastScan.lastLine).append('\n')
                 append("удержите обложку — карточка (моды, сейвы, читы)")
             }
             fillPresets()
