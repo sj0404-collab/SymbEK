@@ -174,7 +174,7 @@ object FastScan {
     }
 
     private fun apply(context: Context, report: Report) {
-        wroteFolder = false
+        wroteFolder = GameFolder.sanitize(context)
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         val current = prefs.getString("gameFolder", "") ?: ""
         val granted = current.startsWith("content:") &&
@@ -187,10 +187,11 @@ object FastScan {
             if (pathHint.isBlank() && report.gameDirs.isNotEmpty()) {
                 prefs.edit().putString("gameFolderPath", report.gameDirs.first().absolutePath).commit()
             }
-        } else {
-            val currentOk = GameFolder.hasRoms(GameFolder.currentPath(context))
-            if (report.gameDirs.isNotEmpty() && !currentOk) {
-                val best = report.gameDirs.first()
+        } else if (report.gameDirs.isNotEmpty()) {
+            val best = report.gameDirs.first()
+            val already = GameFolder.hasRoms(GameFolder.currentPath(context)) &&
+                !current.startsWith("content:")
+            if (!already) {
                 if (GameFolder.write(context, best)) wroteFolder = true
             }
         }

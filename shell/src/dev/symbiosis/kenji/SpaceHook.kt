@@ -397,6 +397,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             Thread({
                 try {
                     AccessFix.repair(activity)
+                    val fixedUri = GameFolder.sanitize(activity)
                     if (AccessFix.hasAllFiles()) {
                         activity.getSharedPreferences("kenji_space", Context.MODE_PRIVATE)
                             .edit().putBoolean("scanned_all_files", true).commit()
@@ -408,7 +409,9 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     activity.runOnUiThread {
                         (activity.findViewById<ViewGroup>(android.R.id.content)
                             ?.findViewWithTag<View>(TAG) as? Panel)?.refresh()
-                        if (FastScan.wroteFolder) FastScan.reloadShelf(activity, force = true)
+                        if (FastScan.wroteFolder || fixedUri) {
+                            FastScan.reloadShelf(activity, force = true)
+                        }
                     }
                 } catch (t: Throwable) {
                     android.util.Log.e("KenjiSpace", "bg", t)

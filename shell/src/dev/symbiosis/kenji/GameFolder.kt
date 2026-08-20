@@ -10,49 +10,15 @@ import java.io.File
 import java.util.Locale
 
 /**
- * Official Kenji reads gameFolder as a Documents tree URI
- * (content://com.android.externalstorage.documents/tree/…) plus
- * gameFolderPath for all-files / RawDocumentFile. A plain /storage path
- * makes getGameList empty and decodeGameIcon fall back to NotAvailableIcon.
+ * Official Kenji lists games from a *granted* Documents tree URI
+ * (the one ACTION_OPEN_DOCUMENT_TREE returns) or, with all-files,
+ * from a filesystem path via fromFullPath / toRawFile.
+ *
+ * 1.0.91 wrote a synthesized tree URI without persistable permission.
+ * fromTreeUri then returns an empty tree → blank shelf + NotAvailableIcon.
  */
 object GameFolder {
     private val ROM_EXT = arrayOf(".nsp", ".xci", ".nro", ".nsz", ".xcz")
-
-    fun pathToTreeUri(path: String): Uri? {
-        if (path.isBlank()) return null
-        if (path.startsWith("content:")) return Uri.parse(path)
-        val abs = try {
-            File(path).canonicalPath
-        } catch (_: Exception) {
-            File(path).absolutePath
-        }
-        val id = treeId(abs) ?: return null
-        return Uri.parse(
-            "content://com.android.externalstorage.documents/tree/" + Uri.encode(id),
-        )
-    }
-
-    private fun treeId(abs: String): String? {
-        val primary = listOf(
-            Environment.getExternalStorageDirectory().absolutePath,
-            "/storage/emulated/0",
-            "/sdcard",
-        )
-        for (root in primary) {
-            if (abs == root || abs.startsWith("$root/")) {
-                val rel = abs.removePrefix(root).trimStart('/')
-                return if (rel.isEmpty()) "primary:" else "primary:$rel"
-            }
-        }
-        if (abs.startsWith("/storage/")) {
-            val rest = abs.removePrefix("/storage/")
-            val vol = rest.substringBefore('/')
-            if (vol.isBlank() || vol == "emulated" || vol == "self") return null
-            val rel = rest.substringAfter('/', missingDelimiterValue = "")
-            return if (rel.isEmpty()) "$vol:" else "$vol:$rel"
-        }
-        return null
-    }
 
     fun hasRoms(path: String): Boolean {
         if (path.isBlank() || path.startsWith("content:")) return false
@@ -64,23 +30,72 @@ object GameFolder {
         } == true
     }
 
-    fun write(context: Context, dir: File): Boolean {
+    fun matchingPersisted(context: Context, path: String): Uri? {
+        if (path.isBlank()) return null
+        context.contentResolver.persistedUriPermissions.forEach { p ->
+            val got = PickActivity.treeToPath(p.uri) ?: return@forEach
+            if (got == path || path.startsWith("$got/") || got.startsWith("$path/")) return p.uri
+        }
+        return null
+    }
+
+    fun write(context: Context, dir: File, grantedUri: Uri? = null): Boolean {
         if (!dir.isDirectory) return false
         val path = dir.absolutePath
-        val uri = pathToTreeUri(path)
+        val persisted = grantedUri ?: matchingPersisted(context, path)
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         val e = prefs.edit()
-        if (uri != null) {
-            e.putString("gameFolder", uri.toString())
-            e.putString("defaultGameFolderUri", uri.toString())
+        if (persisted != null) {
+            e.putString("gameFolder", persisted.toString())
+            e.putString("defaultGameFolderUri", persisted.toString())
+            BootLog.add("gameFolder URI (granted) $persisted · $path")
         } else {
+            // Never invent an ungranted tree URI. Kenji can use the path
+            // when MANAGE_EXTERNAL_STORAGE is on (fromFullPath / RawDocumentFile).
             e.putString("gameFolder", path)
+            e.remove("defaultGameFolderUri")
+            BootLog.add("gameFolder path $path (all-files, без SAF)")
         }
         e.putString("gameFolderPath", path)
         e.putString("defaultFolderPath", path)
         e.commit()
-        BootLog.add("gameFolder URI ${uri ?: "нет"} · path $path")
         return true
+    }
+
+    /** Drop 1.0.91 fake tree URIs that have no persistable grant. */
+    fun sanitize(context: Context): Boolean {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        val folder = prefs.getString("gameFolder", "") ?: ""
+        val path = prefs.getString("gameFolderPath", "") ?: ""
+        if (folder.startsWith("content:")) {
+            val granted = context.contentResolver.persistedUriPermissions.any { p ->
+                val u = p.uri.toString()
+                u == folder || folder.startsWith(u)
+            }
+            if (granted) return false
+            val match = matchingPersisted(context, path)
+            if (match != null) {
+                prefs.edit()
+                    .putString("gameFolder", match.toString())
+                    .putString("defaultGameFolderUri", match.toString())
+                    .commit()
+                BootLog.add("gameFolder: подставил выданный URI $match")
+                return true
+            }
+            if (path.isNotBlank()) {
+                prefs.edit()
+                    .putString("gameFolder", path)
+                    .remove("defaultGameFolderUri")
+                    .commit()
+                BootLog.add("gameFolder: снял фейковый URI → $path")
+                return true
+            }
+            return false
+        }
+        if (folder.isBlank() && hasRoms(path)) {
+            return write(context, File(path))
+        }
+        return false
     }
 
     fun currentPath(context: Context): String {
@@ -93,17 +108,17 @@ object GameFolder {
     }
 
     fun reloadKenji(activity: Activity) {
-        BootLog.add("полка: reloadGameList")
+        BootLog.add("полка: reload")
         activity.runOnUiThread {
             try {
-                if (invokeReload(activity)) return@runOnUiThread
+                invokeReload(activity)
+            } catch (t: Throwable) {
+                Log.w("KenjiSpace", "reloadGameList", t)
+            }
+            try {
                 if (!SpaceHook.isPlaying()) activity.recreate()
             } catch (t: Throwable) {
-                Log.e("KenjiSpace", "reload", t)
-                try {
-                    if (!SpaceHook.isPlaying()) activity.recreate()
-                } catch (_: Throwable) {
-                }
+                Log.e("KenjiSpace", "recreate", t)
             }
         }
     }
@@ -142,18 +157,6 @@ object GameFolder {
             }
         } catch (t: Throwable) {
             Log.w("KenjiSpace", "vmstore", t)
-        }
-        var c: Class<*>? = activity.javaClass
-        while (c != null) {
-            for (f in c.declaredFields) {
-                try {
-                    f.isAccessible = true
-                    val v = f.get(activity) ?: continue
-                    if (v.javaClass.name.contains("HomeViewModel")) return v
-                } catch (_: Throwable) {
-                }
-            }
-            c = c.superclass
         }
         return null
     }

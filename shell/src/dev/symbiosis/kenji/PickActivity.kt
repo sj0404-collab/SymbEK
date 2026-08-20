@@ -35,8 +35,10 @@ class PickActivity : Activity() {
             val path = treeToPath(uri)
             val kind = intent.getStringExtra("kind") ?: "eden"
             if (kind == "games") {
+                // Keep the *granted* tree URI. Synthesizing one from the path
+                // (1.0.91) left Kenji with an empty DocumentFile.
                 if (path != null) {
-                    GameFolder.write(this, File(path))
+                    GameFolder.write(this, File(path), grantedUri = uri)
                 } else {
                     val e = android.preference.PreferenceManager.getDefaultSharedPreferences(this).edit()
                     e.putString("gameFolder", uri.toString())
