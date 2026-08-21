@@ -233,9 +233,18 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
 
     private fun looksLikeLibrary(root: View?): Boolean {
         if (root == null) return false
-        // Do not match our own panel text ("Kenji Space") — that made the
-        // activity look like the shelf while Loading BLADE CHIMERA was up.
-        return findText(root, "Search")
+        return findVisibleText(root, "Search")
+    }
+
+    private fun findVisibleText(v: View, needle: String): Boolean {
+        if (v.visibility != View.VISIBLE) return false
+        if (v is TextView && v.text?.toString()?.contains(needle, ignoreCase = true) == true) return true
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) {
+                if (findVisibleText(v.getChildAt(i), needle)) return true
+            }
+        }
+        return false
     }
 
     private fun findText(v: View, needle: String): Boolean {
@@ -493,6 +502,93 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
     }
 
+    /** Kenji's game view sits on top of our children — pin chrome to that host. */
+    private fun gameHost(activity: Activity): ViewGroup {
+        val content = activity.findViewById<ViewGroup>(android.R.id.content)
+            ?: (activity.window?.decorView as? ViewGroup)
+            ?: throw IllegalStateException("no host")
+        val decor = activity.window?.decorView
+        val dm = activity.resources.displayMetrics
+        for (root in allWindows()) {
+            if (root === decor || root === content) continue
+            if (isSpaceView(root)) continue
+            val vg = root as? ViewGroup ?: continue
+            if (vg.width < dm.widthPixels * 7 / 10) continue
+            if (vg.height < dm.heightPixels * 6 / 10) continue
+            if (looksLikeLibrary(vg)) continue
+            return vg
+        }
+        return content
+    }
+
+    private fun pinChrome(activity: Activity) {
+        val host = try {
+            gameHost(activity)
+        } catch (_: Throwable) {
+            return
+        }
+        fun ensure(tag: String, make: () -> View): View {
+            var v = host.findViewWithTag<View>(tag)
+            if (v == null) {
+                for (root in allWindows()) {
+                    val vg = root as? ViewGroup ?: continue
+                    val found = vg.findViewWithTag<View>(tag) ?: continue
+                    if (found.parent !== host) {
+                        try {
+                            (found.parent as? ViewGroup)?.removeView(found)
+                        } catch (_: Throwable) {
+                        }
+                    }
+                    v = found
+                    break
+                }
+            }
+            if (v == null) {
+                v = make()
+                v.tag = tag
+            }
+            if (v.parent !== host) {
+                try {
+                    (v.parent as? ViewGroup)?.removeView(v)
+                } catch (_: Throwable) {
+                }
+                try {
+                    host.addView(v, FrameLayout.LayoutParams(-1, -1))
+                } catch (_: Throwable) {
+                    try {
+                        host.addView(v, ViewGroup.LayoutParams(-1, -1))
+                    } catch (_: Throwable) {
+                    }
+                }
+            }
+            v.elevation = 96f
+            v.translationZ = 96f
+            v.visibility = View.VISIBLE
+            v.bringToFront()
+            return v
+        }
+        val hud = ensure(TAG_HUD) { PlayHud(activity) } as? PlayHud
+        hud?.start()
+        val load = ensure(TAG_LOAD) { BounceClock(activity) } as? BounceClock
+        if (BounceClock.enabled(activity)) load?.start() else load?.stop()
+        hud?.bringToFront()
+        load?.bringToFront()
+    }
+
+    private fun hideChrome(activity: Activity) {
+        for (root in allWindows()) {
+            val vg = root as? ViewGroup ?: continue
+            vg.findViewWithTag<View>(TAG_HUD)?.let {
+                (it as? PlayHud)?.stop()
+                it.visibility = View.GONE
+            }
+            vg.findViewWithTag<View>(TAG_LOAD)?.let {
+                (it as? BounceClock)?.stop()
+                it.visibility = View.GONE
+            }
+        }
+    }
+
     private fun applyMode(activity: Activity) {
         try {
             activity.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -504,45 +600,23 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         if (playing && looksLikeLibrary(content) && !surface && !waitGame) {
             playing = false
         }
-        val game = playing || surface
-        val busy = !playing && launching(activity, content)
-        DataSeed.allowEnsure = !game && !busy
-        IdleWork.pause = game || busy
+        val busy = launching(activity, content)
+        val shelf = looksLikeLibrary(content) && !surface && !busy && !playing
+        DataSeed.allowEnsure = shelf
+        IdleWork.pause = !shelf
         val panel = content.findViewWithTag<View>(TAG) as? Panel
-        val hud = content.findViewWithTag<View>(TAG_HUD) as? PlayHud
-        val load = content.findViewWithTag<View>(TAG_LOAD) as? BounceClock
-        if (game) {
-            playing = true
-            waitGame = false
-            panel?.collapse()
-            panel?.visibility = View.GONE
-            load?.stop()
-            hud?.visibility = View.VISIBLE
-            hud?.start()
-            unshiftOfficial(content, panel)
-            LoadOverlay.clearSecureCheap(activity)
-        } else if (busy) {
-            waitGame = true
-            panel?.collapse()
-            panel?.visibility = View.GONE
-            hud?.visibility = View.GONE
-            hud?.stop()
-            if (BounceClock.enabled(activity)) {
-                load?.visibility = View.VISIBLE
-                load?.start()
-            } else {
-                load?.stop()
-            }
-            LoadOverlay.hideBlockingLoader(activity)
-            unshiftOfficial(content, panel)
-        } else {
+        if (shelf) {
             waitGame = false
             LoadOverlay.reset()
+            hideChrome(activity)
             panel?.visibility = View.VISIBLE
-            hud?.visibility = View.GONE
-            hud?.stop()
-            load?.stop()
             if (panel != null) panel.post { shiftOfficial(content, panel) }
+        } else {
+            panel?.collapse()
+            panel?.visibility = View.GONE
+            unshiftOfficial(content, panel)
+            pinChrome(activity)
+            LoadOverlay.clearSecureCheap(activity)
         }
     }
 
