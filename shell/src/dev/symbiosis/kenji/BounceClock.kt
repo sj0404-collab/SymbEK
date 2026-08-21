@@ -197,9 +197,7 @@ class BounceClock(private val host: Activity) : FrameLayout(host) {
             }
         }
         chip.setOnLongClickListener {
-            setEnabled(host, false)
-            stop()
-            Toast.makeText(host, "часы выкл · включите в панели Space", Toast.LENGTH_LONG).show()
+            HoldMenu.show(host, HoldMenu.PAGE_LAYERS)
             true
         }
     }

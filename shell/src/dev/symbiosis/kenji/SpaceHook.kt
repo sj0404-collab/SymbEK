@@ -301,7 +301,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         repeat(12) {
             val cur = p ?: return false
             val t = cur.tag
-            if (t == TAG || t == TAG_HUD || t == TAG_LOAD || t == TAG_INJECT) return true
+            if (t == TAG || t == TAG_HUD || t == TAG_LOAD || t == TAG_INJECT || t == HoldMenu.TAG) return true
             p = cur.parent as? View
         }
         return false
@@ -450,6 +450,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         content?.findViewWithTag<View>(TAG)?.visibility = View.GONE
         (content?.findViewWithTag<View>(TAG_LOAD) as? BounceClock)?.stop()
         content?.findViewWithTag<View>(TAG_LOAD)?.visibility = View.GONE
+        HoldMenu.hide(activity)
         waitGame = false
         if (content != null) unshiftOfficial(content, content.findViewWithTag(TAG))
     }
@@ -644,6 +645,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             panel?.collapse()
             panel?.visibility = View.GONE
             unshiftOfficial(content, panel)
+            HoldMenu.hide(activity)
             pinChrome(activity)
             LoadOverlay.clearSecureCheap(activity)
         }
@@ -681,7 +683,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         val use = if (h > cap) cap else h
         for (i in 0 until content.childCount) {
             val v = content.getChildAt(i)
-            if (v === panel || v.tag == TAG_HUD || v.tag == TAG_LOAD) continue
+            if (v === panel || v.tag == TAG_HUD || v.tag == TAG_LOAD || v.tag == HoldMenu.TAG) continue
             val p = v.layoutParams
             if (p is FrameLayout.LayoutParams) {
                 if (p.topMargin != use) {
@@ -695,7 +697,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     private fun unshiftOfficial(content: ViewGroup, panel: View?) {
         for (i in 0 until content.childCount) {
             val v = content.getChildAt(i)
-            if (v === panel || v.tag == TAG_HUD || v.tag == TAG_LOAD) continue
+            if (v === panel || v.tag == TAG_HUD || v.tag == TAG_LOAD || v.tag == HoldMenu.TAG) continue
             val p = v.layoutParams
             if (p is FrameLayout.LayoutParams && p.topMargin != 0) {
                 p.topMargin = 0
@@ -738,6 +740,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     private fun onOurChrome(activity: Activity, ev: MotionEvent): Boolean {
+        if (HoldMenu.hits(activity, ev)) return true
         val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return false
         listOf(TAG, TAG_HUD, TAG_LOAD, TAG_INJECT).forEach { tag ->
             val v = content.findViewWithTag<View>(tag)
@@ -760,7 +763,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         private var sy = 0f
         private var hold = false
         private var grid = false
-        private var moved = false
+        private var forwarded = false
+        private var captured: MotionEvent? = null
         private var posted: Runnable? = null
         private val slop = 28f * host.resources.displayMetrics.density
 
@@ -769,40 +773,71 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             posted = null
         }
 
+        private fun dropCaptured() {
+            captured?.recycle()
+            captured = null
+        }
+
         override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+            if (HoldMenu.isOpen(host)) {
+                if (HoldMenu.hits(host, ev) || onOurChrome(host, ev)) {
+                    return base.dispatchTouchEvent(ev)
+                }
+                if (ev.actionMasked == MotionEvent.ACTION_DOWN) HoldMenu.hide(host)
+                return true
+            }
+            if (onOurChrome(host, ev)) {
+                return base.dispatchTouchEvent(ev)
+            }
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     cancel()
+                    dropCaptured()
                     hold = false
-                    moved = false
-                    grid = onGameGrid(host, ev)
-                    if (onGameGrid(host, ev)) {
+                    forwarded = false
+                    grid = onGameGrid(host, ev) && !HoldMenu.isOpen(host)
+                    if (grid) {
                         sx = ev.rawX
                         sy = ev.rawY
+                        captured = MotionEvent.obtain(ev)
                         val run = Runnable {
                             hold = true
-                            LaunchCard.show(host)
+                            HoldMenu.show(host)
                         }
                         posted = run
-                        main.postDelayed(run, 480)
+                        main.postDelayed(run, 380)
+                        return true
                     }
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = ev.rawX - sx
-                    val dy = ev.rawY - sy
-                    if (dx * dx + dy * dy > slop * slop) {
-                        moved = true
-                        cancel()
+                    if (grid && !forwarded && !hold) {
+                        val dx = ev.rawX - sx
+                        val dy = ev.rawY - sy
+                        if (dx * dx + dy * dy > slop * slop) {
+                            cancel()
+                            forwarded = true
+                            captured?.let { base.dispatchTouchEvent(it) }
+                            dropCaptured()
+                            return base.dispatchTouchEvent(ev)
+                        }
+                        return true
                     }
+                    if (hold) return true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     cancel()
                     if (hold) {
                         hold = false
+                        dropCaptured()
                         return true
                     }
-                    val handled = base.dispatchTouchEvent(ev)
-                    return handled
+                    if (grid && !forwarded) {
+                        forwarded = true
+                        captured?.let { base.dispatchTouchEvent(it) }
+                        dropCaptured()
+                        return base.dispatchTouchEvent(ev)
+                    }
+                    dropCaptured()
                 }
             }
             return base.dispatchTouchEvent(ev)
@@ -872,7 +907,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             val llp = LayoutParams(-2, dp(32))
             llp.marginEnd = dp(8)
             layers.layoutParams = llp
-            layers.setOnClickListener { LaunchCard.show(host) }
+            layers.setOnClickListener { HoldMenu.show(host, HoldMenu.PAGE_LAYERS) }
             head.addView(layers, head.childCount - 1)
             addView(head)
 
@@ -969,7 +1004,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                 }
                 append(FastScan.lastLine).append('\n')
                 append("слои: ").append(LayerBank.summary(host)).append('\n')
-                append("удержите обложку — запуск и слои")
+                append("удержите обложку — нижнее меню: настройки / пресеты / слои")
             }
             fillPresets()
         }
@@ -1282,7 +1317,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             val layers = Button(host)
             layers.text = "слои в игре"
             layers.isAllCaps = false
-            layers.setOnClickListener { LaunchCard.show(host) }
+            layers.setOnClickListener { HoldMenu.show(host, HoldMenu.PAGE_LAYERS) }
             sheetBox.addView(layers)
         }
 
