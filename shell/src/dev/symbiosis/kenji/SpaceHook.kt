@@ -641,7 +641,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             unshiftOfficial(content, panel)
             HoldMenu.hide(activity)
             pinChrome(activity)
-            LoadOverlay.clearSecureCheap(activity)
+            LoadOverlay.tick(activity)
         }
     }
 
