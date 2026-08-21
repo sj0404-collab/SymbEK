@@ -580,14 +580,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                 v.visibility = View.GONE
             }
         }
-        if (LayerBank.hudOn(activity) || LayerBank.statsOn(activity)) {
-            val hud = ensure(TAG_HUD) { PlayHud(activity) } as? PlayHud
-            hud?.applyMode(LayerBank.statsOn(activity), LayerBank.hudOn(activity))
-            hud?.start()
-        } else {
-            drop(TAG_HUD)
-        }
-        if (LayerBank.chipOn(activity)) {
+        drop(TAG_HUD)
+        if (LayerBank.anySpaceOnGame(activity)) {
             val load = ensure(TAG_LOAD) { BounceClock(activity) } as? BounceClock
             load?.start()
             load?.bringToFront()
@@ -944,7 +938,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                 SpaceHook.applyLayers(host)
                 Toast.makeText(
                     host,
-                    if (on) "часы вкл · удержание чипа — меню слоёв" else "часы выкл",
+                    if (on) "часы вкл · тяните чип, ⚙ — оверлей" else "часы выкл",
                     Toast.LENGTH_SHORT,
                 ).show()
             }

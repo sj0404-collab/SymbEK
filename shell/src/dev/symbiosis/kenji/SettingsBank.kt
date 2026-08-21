@@ -33,6 +33,21 @@ object SettingsBank {
     fun pptcOf(c: Context): Boolean = SafePrefs.bool(official(c), "enablePptc", true)
     fun nceOf(c: Context): Boolean = SafePrefs.bool(official(c), "useNce", false)
 
+    fun flag(c: Context, key: String, def: Boolean): Boolean = SafePrefs.bool(official(c), key, def)
+    fun setFlag(c: Context, key: String, on: Boolean) {
+        SafePrefs.putBool(official(c), key, on)
+    }
+
+    fun memOf(c: Context): Int = SafePrefs.integer(official(c), "memoryConfiguration", 0)
+    fun setMem(c: Context, v: Int) {
+        SafePrefs.putInt(official(c), "memoryConfiguration", v)
+    }
+
+    fun modeOf(c: Context): Int = SafePrefs.integer(official(c), "memoryManagerMode", 2)
+    fun setMode(c: Context, v: Int) {
+        SafePrefs.putInt(official(c), "memoryManagerMode", v)
+    }
+
     fun enableFps(c: Context) {
         // Official HUD stays off — we draw a small red overlay instead.
         val p = official(c)
