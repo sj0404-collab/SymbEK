@@ -49,7 +49,26 @@ object LayerBank {
         SafePrefs.putBool(space(c), HUD, on)
     }
 
-    fun anySpaceOnGame(c: Context): Boolean = chipOn(c) || statsOn(c) || hudOn(c)
+    fun sessionOn(c: Context): Boolean = SafePrefs.bool(space(c), SESSION, true)
+
+    fun setSession(c: Context, on: Boolean) {
+        SafePrefs.putBool(space(c), SESSION, on)
+    }
+
+    fun batteryOn(c: Context): Boolean = SafePrefs.bool(space(c), BATTERY, true)
+
+    fun setBattery(c: Context, on: Boolean) {
+        SafePrefs.putBool(space(c), BATTERY, on)
+    }
+
+    fun gearOn(c: Context): Boolean = SafePrefs.bool(space(c), GEAR, true)
+
+    fun setGear(c: Context, on: Boolean) {
+        SafePrefs.putBool(space(c), GEAR, on)
+    }
+
+    fun anySpaceOnGame(c: Context): Boolean =
+        chipOn(c) || statsOn(c) || hudOn(c) || sessionOn(c) || batteryOn(c) || gearOn(c)
 
     fun forceNce(c: Context): Boolean = SafePrefs.bool(space(c), FORCE, false)
 
