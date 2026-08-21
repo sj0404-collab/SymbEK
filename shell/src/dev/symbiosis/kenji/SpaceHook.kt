@@ -560,11 +560,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             v.bringToFront()
             return v
         }
-        val hud = ensure(TAG_HUD) { PlayHud(activity) } as? PlayHud
-        hud?.start()
         val load = ensure(TAG_LOAD) { BounceClock(activity) } as? BounceClock
         if (BounceClock.enabled(activity)) load?.start() else load?.stop()
-        hud?.bringToFront()
         load?.bringToFront()
     }
 
@@ -1350,14 +1347,6 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
 
         fun stop() {
-            running = false
-        }
-
-        private fun dp(v: Int): Int =
-            Math.round(v * resources.displayMetrics.density)
-    }
-}
-    fun stop() {
             running = false
         }
 
