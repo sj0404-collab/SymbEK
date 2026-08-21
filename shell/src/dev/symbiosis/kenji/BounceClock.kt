@@ -47,14 +47,10 @@ class BounceClock(private val host: Activity) : FrameLayout(host) {
     private lateinit var fly: Choreographer.FrameCallback
 
     companion object {
-        private const val PREF = "clock_off"
-
-        fun enabled(c: Context): Boolean =
-            !c.getSharedPreferences("kenji_space", Context.MODE_PRIVATE).getBoolean(PREF, false)
+        fun enabled(c: Context): Boolean = LayerBank.chipOn(c)
 
         fun setEnabled(c: Context, on: Boolean) {
-            c.getSharedPreferences("kenji_space", Context.MODE_PRIVATE)
-                .edit().putBoolean(PREF, !on).commit()
+            LayerBank.setChip(c, on)
         }
     }
 
@@ -139,9 +135,7 @@ class BounceClock(private val host: Activity) : FrameLayout(host) {
 
         val longPress = Runnable {
             if (!moved && running) {
-                setEnabled(host, false)
-                stop()
-                Toast.makeText(host, "часы выкл · включите в панели Space", Toast.LENGTH_LONG).show()
+                LaunchCard.show(host)
             }
         }
         chip.setOnTouchListener { _, ev ->
@@ -188,7 +182,7 @@ class BounceClock(private val host: Activity) : FrameLayout(host) {
                     main.removeCallbacks(longPress)
                     if (!moved) {
                         stop()
-                        Toast.makeText(host, "часы скрыты · долгое нажатие — выкл совсем", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(host, "часы скрыты · удержание — слои и запуск", Toast.LENGTH_SHORT).show()
                     } else {
                         val speed = kotlin.math.abs(vx) + kotlin.math.abs(vy)
                         if (speed > 0.8f * d) {

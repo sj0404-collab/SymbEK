@@ -14,8 +14,12 @@ object SettingsBank {
     private fun space(c: Context) = c.getSharedPreferences("kenji_space", Context.MODE_PRIVATE)
     private fun official(c: Context) = PreferenceManager.getDefaultSharedPreferences(c)
 
-    fun overlayOn(c: Context): Boolean = SafePrefs.bool(space(c), OVERLAY, true)
+    fun overlayOn(c: Context): Boolean = LayerBank.statsOn(c)
     fun setOverlay(c: Context, on: Boolean) {
+        LayerBank.setStats(c, on)
+    }
+
+    fun setOverlayRaw(c: Context, on: Boolean) {
         SafePrefs.putBool(space(c), OVERLAY, on)
     }
 
@@ -65,6 +69,14 @@ object SettingsBank {
         val p = official(c)
         SafePrefs.putFloat(p, "resScale", scale)
         SafePrefs.putBool(p, "enableDocked", docked)
+    }
+
+    fun applyLaunch(c: Context, nce: Boolean, pptc: Boolean, docked: Boolean, scale: Float) {
+        val p = official(c)
+        SafePrefs.putBool(p, "useNce", nce)
+        SafePrefs.putBool(p, "enablePptc", pptc)
+        SafePrefs.putBool(p, "enableDocked", docked)
+        SafePrefs.putFloat(p, "resScale", scale)
     }
 
     fun ensureCatalog(c: Context) {

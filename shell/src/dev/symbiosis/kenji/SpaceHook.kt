@@ -63,6 +63,14 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     fun isPlaying(): Boolean = playing
     fun isBooting(): Boolean = waitGame && !playing
 
+    fun applyLayers(activity: Activity) {
+        try {
+            applyMode(activity)
+        } catch (t: Throwable) {
+            android.util.Log.e("KenjiSpace", "layers", t)
+        }
+    }
+
     fun inGame(ctx: Context): Boolean {
         val act = ctx as? Activity ?: return false
         return hasGameSurface(act.findViewById(android.R.id.content)) ||
@@ -217,7 +225,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
 
     private fun isOurDialog(root: View): Boolean =
         findText(root, "карточка игры") || findText(root, "журнал запуска") ||
-            findText(root, "настройки игры")
+            findText(root, "настройки игры") || findText(root, "запуск и слои")
 
     private fun looksLikeSettings(root: View?): Boolean {
         if (root == null) return false
@@ -560,9 +568,31 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             v.bringToFront()
             return v
         }
-        val load = ensure(TAG_LOAD) { BounceClock(activity) } as? BounceClock
-        if (BounceClock.enabled(activity)) load?.start() else load?.stop()
-        load?.bringToFront()
+        fun drop(tag: String) {
+            for (root in allWindows()) {
+                val vg = root as? ViewGroup ?: continue
+                val v = vg.findViewWithTag<View>(tag) ?: continue
+                when (v) {
+                    is BounceClock -> v.stop()
+                    is PlayHud -> v.stop()
+                }
+                v.visibility = View.GONE
+            }
+        }
+        if (LayerBank.hudOn(activity) || LayerBank.statsOn(activity)) {
+            val hud = ensure(TAG_HUD) { PlayHud(activity) } as? PlayHud
+            hud?.applyMode(LayerBank.statsOn(activity), LayerBank.hudOn(activity))
+            hud?.start()
+        } else {
+            drop(TAG_HUD)
+        }
+        if (LayerBank.chipOn(activity)) {
+            val load = ensure(TAG_LOAD) { BounceClock(activity) } as? BounceClock
+            load?.start()
+            load?.bringToFront()
+        } else {
+            drop(TAG_LOAD)
+        }
     }
 
     private fun hideChrome(activity: Activity) {
@@ -592,9 +622,17 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         // library was PlayHud, not Kenji. Chip = BounceClock. Factory = logo/covers.
         val shelf = !surface && !emu && !waitGame
         if (shelf) playing = false
-        val busy = launching(activity, content)
+        launching(activity, content)
         DataSeed.allowEnsure = shelf
         IdleWork.pause = !shelf
+        try {
+            if (shelf) {
+                activity.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                activity.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        } catch (_: Throwable) {
+        }
         val panel = content.findViewWithTag<View>(TAG) as? Panel
         if (shelf) {
             waitGame = false
@@ -677,16 +715,23 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         return x >= loc[0] && x < loc[0] + v.width && y >= loc[1] && y < loc[1] + v.height
     }
 
-    private fun onGameGrid(activity: Activity, ev: MotionEvent): Boolean {
-        if (onOurChrome(activity, ev)) return false
+    private fun onShelf(activity: Activity): Boolean {
+        if (playing || waitGame || inGame(activity)) return false
+        if (emulationRunning(activity)) return false
         val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return false
         val decor = activity.window?.decorView
         if (looksLikeSettings(content) || looksLikeSettings(decor)) return false
-        if (!looksLikeLibrary(content) && !looksLikeLibrary(decor)) return false
+        return true
+    }
+
+    private fun onGameGrid(activity: Activity, ev: MotionEvent): Boolean {
+        if (onOurChrome(activity, ev)) return false
+        if (!onShelf(activity)) return false
+        val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return false
         val h = content.height
         if (h <= 0) return false
         val panel = content.findViewWithTag<View>(TAG)
-        // Skip Kenji home / gear / search row so settings never arm the load bar.
+        // Skip Kenji home / gear / search row and the folder/refresh FABs.
         val top = (panel?.height ?: 0) + dp(activity, 108)
         val bot = h - dp(activity, 92)
         return ev.y > top && ev.y < bot
@@ -731,17 +776,12 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     hold = false
                     moved = false
                     grid = onGameGrid(host, ev)
-                    val content = host.findViewById<ViewGroup>(android.R.id.content)
-                    val decor = host.window?.decorView
-                    val onShelf = content != null &&
-                        (looksLikeLibrary(content) || looksLikeLibrary(decor)) &&
-                        !looksLikeSettings(content) && !looksLikeSettings(decor)
-                    if (content != null && onShelf && !inGame(host) && !onOurChrome(host, ev) && !launching(host, content)) {
+                    if (onGameGrid(host, ev)) {
                         sx = ev.rawX
                         sy = ev.rawY
                         val run = Runnable {
                             hold = true
-                            showGameCard(host)
+                            LaunchCard.show(host)
                         }
                         posted = run
                         main.postDelayed(run, 480)
@@ -770,102 +810,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     }
 
     private fun showGameCard(host: Activity) {
-        try {
-            val scroll = ScrollView(host)
-            val box = LinearLayout(host)
-            box.orientation = LinearLayout.VERTICAL
-            val pad = dp(host, 14)
-            box.setPadding(pad, pad, pad, pad)
-
-            val coverRow = HorizontalScrollView(host)
-            val cover = TextView(host)
-            cover.text = "  обложка  ·  удержите другую, чтобы сменить  ·  прокрутка →  "
-            cover.setTextColor(TEXT)
-            cover.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            cover.setPadding(dp(host, 18), dp(host, 28), dp(host, 18), dp(host, 28))
-            val cd = GradientDrawable()
-            cd.setColor(0xFF1C1C24.toInt())
-            cd.cornerRadius = dp(host, 14).toFloat()
-            cover.background = cd
-            cover.minWidth = dp(host, 280)
-            coverRow.addView(cover)
-            box.addView(coverRow)
-
-            val id = GameExtra.lastTitleId(host)
-            val sub = TextView(host)
-            sub.text = if (id.isNotEmpty()) "titleId $id" else "titleId неизвестен — покажу все папки"
-            sub.setTextColor(MUTED)
-            sub.setPadding(0, dp(host, 8), 0, dp(host, 8))
-            box.addView(sub)
-
-            box.addView(toggleRow(host, "оверлей FPS", SettingsBank.overlayOn(host)) { on ->
-                SettingsBank.setOverlay(host, on)
-            })
-            box.addView(toggleRow(host, "журнал запуска", SettingsBank.journalOn(host)) { on ->
-                SettingsBank.setJournal(host, on)
-            })
-
-            addSection(host, box, "пресеты")
-            SettingsBank.ensureCatalog(host)
-            for (name in SettingsBank.listNamed(host)) {
-                val n = name
-                box.addView(plainBtn(host, n) {
-                    val msg = GamePause.applyThen(host) { SettingsBank.applyNamed(host, n) }
-                    Toast.makeText(host, msg, Toast.LENGTH_SHORT).show()
-                })
-            }
-
-            addSection(host, box, "моды · сейвы · читы")
-            val extras = TextView(host)
-            extras.setTextColor(MUTED)
-            extras.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            extras.setTypeface(Typeface.MONOSPACE)
-            extras.text = GameExtra.report(host)
-            extras.setPadding(0, dp(host, 4), 0, dp(host, 8))
-            box.addView(extras)
-
-            scroll.addView(box)
-            AlertDialog.Builder(host)
-                .setTitle("карточка игры")
-                .setView(scroll)
-                .setPositiveButton("закрыть", null)
-                .show()
-        } catch (t: Throwable) {
-            android.util.Log.e("KenjiSpace", "card", t)
-        }
-    }
-
-    private fun addSection(host: Activity, box: LinearLayout, title: String) {
-        val t = TextView(host)
-        t.text = title
-        t.setTextColor(MINT)
-        t.setTypeface(Typeface.DEFAULT_BOLD)
-        t.setPadding(0, dp(host, 12), 0, dp(host, 4))
-        box.addView(t)
-    }
-
-    private fun toggleRow(host: Activity, label: String, on: Boolean, set: (Boolean) -> Unit): Button {
-        var state = on
-        val b = Button(host)
-        fun paint() {
-            b.text = if (state) "$label · вкл" else "$label · выкл"
-        }
-        paint()
-        b.isAllCaps = false
-        b.setOnClickListener {
-            state = !state
-            set(state)
-            paint()
-        }
-        return b
-    }
-
-    private fun plainBtn(host: Activity, label: String, click: () -> Unit): Button {
-        val b = Button(host)
-        b.text = label
-        b.isAllCaps = false
-        b.setOnClickListener { click() }
-        return b
+        LaunchCard.show(host)
     }
 
     private class Panel(private val host: Activity) : LinearLayout(host) {
@@ -912,6 +857,23 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             plus.layoutParams = plp
             plus.setOnClickListener { pick("games") }
             head.addView(plus)
+
+            val layers = TextView(host)
+            layers.text = "слои"
+            layers.gravity = Gravity.CENTER
+            layers.setTextColor(Color.BLACK)
+            layers.setTypeface(Typeface.DEFAULT_BOLD)
+            layers.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            val ld = GradientDrawable()
+            ld.setColor(MINT)
+            ld.cornerRadius = dp(16).toFloat()
+            layers.background = ld
+            layers.setPadding(dp(10), dp(6), dp(10), dp(6))
+            val llp = LayoutParams(-2, dp(32))
+            llp.marginEnd = dp(8)
+            layers.layoutParams = llp
+            layers.setOnClickListener { LaunchCard.show(host) }
+            head.addView(layers, head.childCount - 1)
             addView(head)
 
             body = LinearLayout(host)
@@ -938,14 +900,16 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             bridges.addView(rowBtn("Папка Eden/files (оригинал прошивки)") { pick("eden") })
             bridges.addView(rowBtn("Папка игр (+)") { pick("games") })
             bridges.addView(rowBtn("Найти на диске") { scanDisk() })
+            bridges.addView(rowBtn("Слои в игре · запуск") { LaunchCard.show(host) })
             var clockBtn: Button? = null
-            clockBtn = rowBtn(if (BounceClock.enabled(host)) "Часы ожидания · вкл" else "Часы ожидания · выкл") {
-                val on = !BounceClock.enabled(host)
-                BounceClock.setEnabled(host, on)
+            clockBtn = rowBtn(if (LayerBank.chipOn(host)) "Часы ожидания · вкл" else "Часы ожидания · выкл") {
+                val on = !LayerBank.chipOn(host)
+                LayerBank.setChip(host, on)
                 clockBtn?.text = if (on) "Часы ожидания · вкл" else "Часы ожидания · выкл"
+                SpaceHook.applyLayers(host)
                 Toast.makeText(
                     host,
-                    if (on) "часы вкл · тап скрыть, дёрнуть — рикошет" else "часы выкл",
+                    if (on) "часы вкл · удержание чипа — меню слоёв" else "часы выкл",
                     Toast.LENGTH_SHORT,
                 ).show()
             }
@@ -1004,7 +968,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     append("нет доступа ко всем файлам — нажмите «Найти на диске»\n")
                 }
                 append(FastScan.lastLine).append('\n')
-                append("удержите обложку — карточка (моды, сейвы, читы)")
+                append("слои: ").append(LayerBank.summary(host)).append('\n')
+                append("удержите обложку — запуск и слои")
             }
             fillPresets()
         }
@@ -1314,6 +1279,11 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             extra.setTypeface(Typeface.MONOSPACE)
             extra.text = "\n" + GameExtra.report(host)
             sheetBox.addView(extra)
+            val layers = Button(host)
+            layers.text = "слои в игре"
+            layers.isAllCaps = false
+            layers.setOnClickListener { LaunchCard.show(host) }
+            sheetBox.addView(layers)
         }
 
         private fun paintStats() {
@@ -1336,12 +1306,19 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             )
         }
 
+        fun applyMode(showStats: Boolean, showBar: Boolean) {
+            stats.visibility = if (showStats) VISIBLE else GONE
+            fab.visibility = if (showBar && !fabHidden) VISIBLE else GONE
+            bar.visibility = if (showBar) VISIBLE else GONE
+            if (!showBar) sheet.visibility = GONE
+        }
+
         fun start() {
             if (running) return
             running = true
             frames = 0
             lastNs = 0L
-            fab.visibility = if (fabHidden) GONE else VISIBLE
+            applyMode(LayerBank.statsOn(host), LayerBank.hudOn(host))
             paintStats()
             Choreographer.getInstance().postFrameCallback(cb)
         }
