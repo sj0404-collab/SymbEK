@@ -486,13 +486,6 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             panel.refresh()
             panel.post { shiftOfficial(content, panel) }
         }
-        if (content.findViewWithTag<View>(TAG_HUD) == null) {
-            val hud = PlayHud(activity)
-            hud.tag = TAG_HUD
-            hud.visibility = View.GONE
-            content.addView(hud, FrameLayout.LayoutParams(-1, -1))
-            hud.elevation = 26f
-        }
         if (content.findViewWithTag<View>(TAG_LOAD) == null) {
             val load = BounceClock(activity)
             load.tag = TAG_LOAD
@@ -1357,6 +1350,14 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
 
         fun stop() {
+            running = false
+        }
+
+        private fun dp(v: Int): Int =
+            Math.round(v * resources.displayMetrics.density)
+    }
+}
+    fun stop() {
             running = false
         }
 
