@@ -81,6 +81,14 @@ class BounceClock(private val host: Activity) : FrameLayout(host) {
         sand.setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
         chip.addView(sand)
 
+        val mark = TextView(host)
+        mark.text = "Space"
+        mark.setTextColor(0xFF5EF0E6.toInt())
+        mark.setTypeface(Typeface.DEFAULT_BOLD)
+        mark.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+        mark.gravity = Gravity.CENTER
+        chip.addView(mark)
+
         elapsed = TextView(host)
         elapsed.setTextColor(0xFFB8B8C4.toInt())
         elapsed.setTypeface(Typeface.MONOSPACE)

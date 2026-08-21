@@ -597,11 +597,12 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
         val surface = hasGameSurface(content) || hasGameSurface(activity.window?.decorView)
         if (surface) playing = true
-        if (playing && looksLikeLibrary(content) && !surface && !waitGame) {
-            playing = false
-        }
+        val emu = emulationRunning(activity)
+        // Factory shelf has Compose "Search" — not a TextView. HUD on the
+        // library was PlayHud, not Kenji. Chip = BounceClock. Factory = logo/covers.
+        val shelf = !surface && !emu && !waitGame
+        if (shelf) playing = false
         val busy = launching(activity, content)
-        val shelf = looksLikeLibrary(content) && !surface && !busy && !playing
         DataSeed.allowEnsure = shelf
         IdleWork.pause = !shelf
         val panel = content.findViewWithTag<View>(TAG) as? Panel
@@ -1346,8 +1347,6 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
 
         fun start() {
-            playing = true
-            waitGame = false
             if (running) return
             running = true
             frames = 0
