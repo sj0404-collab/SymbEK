@@ -113,7 +113,7 @@ object GameFolder {
             // Do not call reloadGameList — Kenji shows a modal Loading card
             // on the shelf without opening GameHost.
             try {
-                if (!SpaceHook.isPlaying()) activity.recreate()
+                if (!SpaceHook.isPlaying() && !SpaceHook.isBooting()) activity.recreate()
             } catch (t: Throwable) {
                 Log.e("KenjiSpace", "recreate", t)
             }

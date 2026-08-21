@@ -59,7 +59,6 @@ object LoadOverlay {
             for (root in SpaceHook.allWindowsPublic()) {
                 if (root === decor) continue
                 if (SpaceHook.isSpaceView(root)) continue
-                if (SpaceHook.hasGameSurface(root)) continue
                 if (isPrompt(root)) continue
                 blockExtra(activity, root)
             }

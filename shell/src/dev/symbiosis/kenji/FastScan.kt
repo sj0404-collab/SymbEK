@@ -53,6 +53,9 @@ object FastScan {
     private val ROM_EXT = arrayOf(".nsp", ".xci", ".nro", ".nsz", ".xcz")
 
     fun run(context: Context): Report {
+        if (IdleWork.aborted() || !DataSeed.allowEnsure) {
+            return last ?: Report(emptyList(), 0, emptyList(), emptyList(), emptyList(), 0, 0, AccessFix.hasAllFiles())
+        }
         val t0 = SystemClock.uptimeMillis()
         val romsByDir = HashMap<String, Int>()
         val keys = ArrayList<File>()

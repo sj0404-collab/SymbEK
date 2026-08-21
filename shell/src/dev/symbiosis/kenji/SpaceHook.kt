@@ -110,9 +110,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             waitGame = false
             return false
         }
-        // Do not set playing from EmulationService alone — that swapped
-        // to PlayHud on a black window while the game stayed elsewhere.
-        // Hourglass overlay stays on Kenji's layer until a real surface.
+        if (waitGame) return true
         if (looksLikeSettings(content) || looksLikeSettings(activity.window?.decorView)) {
             waitGame = false
             return false
@@ -398,29 +396,31 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         }
         if (!seeded && !inGame(activity)) {
             seeded = true
-            Thread({
-                try {
-                    AccessFix.repair(activity)
-                    val fixedUri = GameFolder.sanitize(activity)
-                    if (AccessFix.hasAllFiles()) {
-                        activity.getSharedPreferences("kenji_space", Context.MODE_PRIVATE)
-                            .edit().putBoolean("scanned_all_files", true).commit()
-                        FastScan.run(activity)
-                    }
-                    DataSeed.ensure(activity)
-                    SettingsBank.applyDefaultOnce(activity)
-                    SettingsBank.enableFps(activity)
-                    activity.runOnUiThread {
-                        (activity.findViewById<ViewGroup>(android.R.id.content)
-                            ?.findViewWithTag<View>(TAG) as? Panel)?.refresh()
-                        if (FastScan.wroteFolder || fixedUri) {
-                            FastScan.reloadShelf(activity, force = true)
-                        }
-                    }
-                } catch (t: Throwable) {
-                    android.util.Log.e("KenjiSpace", "bg", t)
+            IdleWork.bg("ks-access") {
+                AccessFix.repair(activity)
+                GameFolder.sanitize(activity)
+            }
+            IdleWork.bg("ks-scan") {
+                if (IdleWork.aborted()) return@bg
+                if (AccessFix.hasAllFiles()) {
+                    activity.getSharedPreferences("kenji_space", Context.MODE_PRIVATE)
+                        .edit().putBoolean("scanned_all_files", true).commit()
+                    FastScan.run(activity)
                 }
-            }, "kenji-seed").start()
+            }
+            IdleWork.bg("ks-fw") {
+                if (IdleWork.aborted()) return@bg
+                DataSeed.ensure(activity)
+            }
+            IdleWork.bg("ks-prefs") {
+                if (IdleWork.aborted()) return@bg
+                SettingsBank.applyDefaultOnce(activity)
+                SettingsBank.enableFps(activity)
+                activity.runOnUiThread {
+                    (activity.findViewById<ViewGroup>(android.R.id.content)
+                        ?.findViewWithTag<View>(TAG) as? Panel)?.refresh()
+                }
+            }
         }
         poll(activity)
     }
@@ -507,6 +507,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         val game = playing || surface
         val busy = !playing && launching(activity, content)
         DataSeed.allowEnsure = !game && !busy
+        IdleWork.pause = game || busy
         val panel = content.findViewWithTag<View>(TAG) as? Panel
         val hud = content.findViewWithTag<View>(TAG_HUD) as? PlayHud
         val load = content.findViewWithTag<View>(TAG_LOAD) as? BounceClock

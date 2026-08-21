@@ -72,8 +72,12 @@ object FirmwareHunt {
             walkSaf(context, p.uri, roots)
         }
 
+        var budget = 180
         for (root in roots) {
-            walkFiles(root, 6, 500, ::add)
+            if (!DataSeed.allowEnsure || IdleWork.aborted()) break
+            walkFiles(root, 4, 80, ::add)
+            budget -= 80
+            if (budget <= 0) break
         }
 
         lastHits = hits.sortedByDescending { it.nca }
@@ -99,6 +103,7 @@ object FirmwareHunt {
         var n = 0
         val seen = HashSet<String>()
         while (q.isNotEmpty() && n < maxDirs) {
+            if (!DataSeed.allowEnsure || IdleWork.aborted()) break
             val (dir, depth) = q.removeFirst()
             val key = dir.absolutePath
             if (!seen.add(key)) continue
