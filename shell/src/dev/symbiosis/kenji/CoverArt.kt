@@ -197,16 +197,18 @@ object CoverArt {
         return null
     }
 
-    private fun decodeFile(f: File): Bitmap? = try {
-        val opts = BitmapFactory.Options()
-        opts.inJustDecodeBounds = true
-        BitmapFactory.decodeFile(f.absolutePath, opts)
-        if (opts.outWidth < 32 || opts.outHeight < 32) return null
-        opts.inJustDecodeBounds = false
-        opts.inSampleSize = if (opts.outWidth > 512) 2 else 1
-        BitmapFactory.decodeFile(f.absolutePath, opts)
-    } catch (_: Throwable) {
-        null
+    private fun decodeFile(f: File): Bitmap? {
+        return try {
+            val opts = BitmapFactory.Options()
+            opts.inJustDecodeBounds = true
+            BitmapFactory.decodeFile(f.absolutePath, opts)
+            if (opts.outWidth < 32 || opts.outHeight < 32) return null
+            opts.inJustDecodeBounds = false
+            opts.inSampleSize = if (opts.outWidth > 512) 2 else 1
+            BitmapFactory.decodeFile(f.absolutePath, opts)
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     private fun save(f: File, bmp: Bitmap) {
