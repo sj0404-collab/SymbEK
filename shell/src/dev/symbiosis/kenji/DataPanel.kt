@@ -53,7 +53,7 @@ class DataPanel(private val host: Activity) : FrameLayout(host) {
         note.setTextColor(0xFFB8B8C4.toInt())
         note.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
         note.setPadding(0, dp(4), 0, dp(8))
-        note.text = "папка может называться как угодно и лежать где угодно. дефолты Download/ed не обязательны."
+        note.text = "прошивка одна — Eden nand. в Eden больше не пишем bis/. Kenji видит ярлыки в своей песочнице. имя папки любое."
         sheet.addView(note)
 
         status = TextView(host)
@@ -71,6 +71,7 @@ class DataPanel(private val host: Activity) : FrameLayout(host) {
         box.addView(row("указать Eden / прошивку / ключи") { pick("eden") })
         box.addView(row("найти на диске .nsp и prod.keys") { scan() })
         box.addView(row("слои в игре") { HoldMenu.show(host, HoldMenu.PAGE_LAYERS) })
+        box.addView(row("убрать bis из Eden (оставить nand)") { scrubEden() })
         box.addView(row("починить прошивку и ключи", accent = true) { fix() })
         box.addView(row("закрыть") { close() })
         scroll.addView(box)
@@ -172,6 +173,17 @@ class DataPanel(private val host: Activity) : FrameLayout(host) {
                     ?.findViewWithTag<ShelfDeck>(ShelfDeck.TAG))?.fill(true)
             }
         }, "data-scan").start()
+    }
+
+    private fun scrubEden() {
+        val eden = DataSeed.edenDir(host)
+        if (eden == null) {
+            Toast.makeText(host, "Eden не указан", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val n = DataSeed.detachEdenFirmware(File(eden))
+        refresh()
+        Toast.makeText(host, "снял $n папок из Eden/bis. nand не трогал", Toast.LENGTH_LONG).show()
     }
 
     private fun fix() {

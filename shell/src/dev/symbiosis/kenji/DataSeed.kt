@@ -30,32 +30,35 @@ object DataSeed {
     fun appPath(context: Context): File =
         context.getExternalFilesDir(null) ?: context.filesDir
 
+    /** GameHost sandbox only. Never Eden — bis next to nand was a second firmware. */
+    fun playHome(context: Context): File = appPath(context)
+
     /**
-     * What official GameHost actually reads.
-     * If AppPath already points at Eden/files (set before the kernel), use that.
-     * Never the empty /sdcard/Kenji.
+     * Remove Kenji-layout bis/system we planted inside Eden.
+     * Keeps nand/ and bis/user/save. Only if nand still has the NCA.
      */
-    fun playHome(context: Context): File {
-        try {
-            val p = android.preference.PreferenceManager.getDefaultSharedPreferences(context)
-            for (key in arrayOf("AppPath", "appPath", "dataPath")) {
-                val v = p.getString(key, null) ?: continue
-                if (v.isBlank()) continue
-                val f = File(v)
-                if (!f.isDirectory) continue
-                val kenjiEmpty = f.name.equals("Kenji", true) &&
-                    countKenji(File(f, "bis/system/Contents/registered")) < 5 &&
-                    !File(f, "nand").isDirectory
-                if (kenjiEmpty) continue
-                if (File(f, "bis").isDirectory || File(f, "nand").isDirectory ||
-                    File(f, "system").isDirectory || File(f, "keys").isDirectory
-                ) {
-                    return f
-                }
-            }
-        } catch (_: Throwable) {
+    fun detachEdenFirmware(eden: File): Int {
+        val nand = File(eden, "nand/system/Contents/registered")
+        if (countAnyNca(nand) < 5) {
+            BootLog.add("detach пропуск — в nand мало NCA")
+            return 0
         }
-        return appPath(context)
+        val reg = File(eden, "bis/system/Contents/registered")
+        if (!reg.isDirectory) return 0
+        var n = 0
+        reg.listFiles()?.forEach { d ->
+            if (d.isDirectory && d.name.lowercase(Locale.US).endsWith(".nca")) {
+                d.deleteRecursively()
+                n++
+            }
+        }
+        reg.delete()
+        val contents = File(eden, "bis/system/Contents")
+        if (contents.isDirectory && contents.list().isNullOrEmpty()) contents.delete()
+        val sys = File(eden, "bis/system")
+        if (sys.isDirectory && sys.list().isNullOrEmpty()) sys.delete()
+        BootLog.add("detach Eden bis registered $n папок")
+        return n
     }
 
     fun userKenjiDir(context: Context): File? {
@@ -128,8 +131,22 @@ object DataSeed {
             }
             ensureLogsDir(appPath(context))
             ensureLogsDir(context.filesDir)
+            val space = appPath(context)
+            val official = android.preference.PreferenceManager.getDefaultSharedPreferences(context)
+            official.edit()
+                .putString("AppPath", space.absolutePath)
+                .putString("appPath", space.absolutePath)
+                .putString("dataPath", space.absolutePath)
+                .commit()
+            pointedEarly = true
+            try {
+                System.setProperty("user.home", space.absolutePath)
+            } catch (_: Throwable) {
+            }
+            File(space, "system").mkdirs()
+            ensureLogsDir(space)
             if (eden == null) {
-                BootLog.add("Eden нет — AppPath остаётся ${appPath(context).absolutePath}")
+                BootLog.add("Eden нет — AppPath ${space.absolutePath}")
                 return
             }
             val home = File(eden)
@@ -137,37 +154,11 @@ object DataSeed {
                 BootLog.add("Eden путь не папка: $eden")
                 return
             }
-            val official = android.preference.PreferenceManager.getDefaultSharedPreferences(context)
-            val e = official.edit()
-            listOf("AppPath", "appPath", "dataPath").forEach { key ->
-                e.putString(key, home.absolutePath)
-            }
-            e.commit()
-            pointedEarly = true
-            try {
-                System.setProperty("user.home", home.absolutePath)
-            } catch (_: Throwable) {
-            }
-            File(home, "system").mkdirs()
-            ensureLogsDir(home)
-            copyKey(File(appPath(context), "system/prod.keys"), File(home, "system/prod.keys"))
-            copyKey(File(home, "keys/prod.keys"), File(home, "system/prod.keys"))
-            val keys = File(home, "system/prod.keys")
-            val kenjiN = countKenji(File(home, "bis/system/Contents/registered"))
-            val kenjiB = BootLog.registeredBytes(File(home, "bis/system/Contents/registered"))
-            val nandN = countAnyNca(File(home, "nand/system/Contents/registered"))
-            val nandB = BootLog.registeredBytes(File(home, "nand/system/Contents/registered"))
-            remember(
-                context,
-                File(home, "bis").absolutePath,
-                "на месте (AppPath=Eden)",
-                kenjiN,
-            )
-            BootLog.add("AppPath → ${home.absolutePath}")
-            BootLog.add(
-                "на месте: ключи ${if (keys.isFile) "${keys.length()} Б" else "нет"} · " +
-                    "bis $kenjiN NCA ${BootLog.human(kenjiB)} · nand $nandN NCA ${BootLog.human(nandB)}",
-            )
+            copyKey(File(home, "keys/prod.keys"), File(space, "system/prod.keys"))
+            copyKey(File(home, "system/prod.keys"), File(space, "system/prod.keys"))
+            val n = detachEdenFirmware(home)
+            BootLog.add("AppPath → ${space.absolutePath} (не Eden)")
+            BootLog.add("снял из Eden bis: $n · nand ${countAnyNca(File(home, "nand/system/Contents/registered"))} NCA")
         } catch (t: Throwable) {
             Log.e("KenjiSpace", "pointHomeEarly", t)
             BootLog.add("pointHomeEarly ошибка ${t.message}")
@@ -196,6 +187,7 @@ object DataSeed {
 
     private fun ensureInner(context: Context) {
         BootLog.add("ensure.start")
+        edenDir(context)?.let { detachEdenFirmware(File(it)) }
         val dest = playHome(context)
         BootLog.add("playHome ${dest.absolutePath}")
         repairAppPath(context)
@@ -584,13 +576,7 @@ object DataSeed {
             AutoFix.lastErr = "symlink ${t.message}"
             Log.w("KenjiSpace", "symlink ${dest.name}", t)
         }
-        try {
-            Os.link(src.absolutePath, dest.absolutePath)
-            if (isReadableNca(dest)) return "hardlink"
-        } catch (t: Throwable) {
-            AutoFix.lastErr = "link ${t.message}"
-            Log.w("KenjiSpace", "link ${dest.name}", t)
-        }
+        // No hardlink, no copy. Second name = "duplicate" in every cleaner.
         return null
     }
 

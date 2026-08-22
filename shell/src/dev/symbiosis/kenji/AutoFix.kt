@@ -199,14 +199,8 @@ object AutoFix {
             Os.symlink(payload.absolutePath, dest.absolutePath)
             dest.exists()
         } catch (t: Throwable) {
-            lastErr = "symlink ${err(t)}"
-            try {
-                Os.link(payload.absolutePath, dest.absolutePath)
-                dest.isFile && dest.length() == payload.length()
-            } catch (t2: Throwable) {
-                lastErr = "symlink ${err(t)} · hardlink ${err(t2)}"
-                false
-            }
+            lastErr = "symlink ${err(t)} · копию не делаю"
+            false
         }
     }
 
