@@ -231,16 +231,37 @@ class ShelfDeck(private val host: Activity) : FrameLayout(host) {
         bg.setStroke(dp(2), if (on) 0xFF5EF0E6.toInt() else 0x33FFFFFF)
         box.background = bg
         box.setPadding(dp(8), dp(8), dp(8), dp(8))
-        val face = TextView(host)
-        face.gravity = Gravity.CENTER
-        face.setTextColor(0xFF5EF0E6.toInt())
-        face.setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
-        face.text = when {
+        val face = FrameLayout(host)
+        face.setBackgroundColor(0xFF14141A.toInt())
+        val ph = TextView(host)
+        ph.gravity = Gravity.CENTER
+        ph.setTextColor(0xFF5EF0E6.toInt())
+        ph.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+        ph.text = when {
             r.update -> "+"
             r.dlc -> "DLC"
             else -> "◎"
         }
-        face.setBackgroundColor(0xFF14141A.toInt())
+        face.addView(ph, FrameLayout.LayoutParams(-1, -1))
+        val img = ImageView(host)
+        img.scaleType = ImageView.ScaleType.CENTER_CROP
+        img.visibility = View.GONE
+        face.addView(img, FrameLayout.LayoutParams(-1, -1))
+        val hit = CoverArt.cached(r)
+        if (hit != null) {
+            img.setImageBitmap(hit)
+            img.visibility = View.VISIBLE
+            ph.visibility = View.GONE
+        } else {
+            CoverArt.load(host, r) { bmp ->
+                if (bmp == null) return@load
+                host.runOnUiThread {
+                    img.setImageBitmap(bmp)
+                    img.visibility = View.VISIBLE
+                    ph.visibility = View.GONE
+                }
+            }
+        }
         box.addView(face, LinearLayout.LayoutParams(dp(120), dp(120)))
         val nm = TextView(host)
         nm.text = when {
