@@ -73,6 +73,7 @@ object RomList {
             .replace(Regex("\\s+"), " ")
             .trim()
         if (title.isEmpty()) title = f.name
-        return Rom(f, title, id, f.length(), update, compressed)
+        val dlc = id.isNotEmpty() && !id.endsWith("000") && !id.endsWith("800")
+        return Rom(f, title, id, f.length(), update, dlc, compressed)
     }
 }
