@@ -301,7 +301,9 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         repeat(12) {
             val cur = p ?: return false
             val t = cur.tag
-            if (t == TAG || t == TAG_HUD || t == TAG_LOAD || t == TAG_INJECT || t == HoldMenu.TAG) return true
+            if (t == TAG || t == TAG_HUD || t == TAG_LOAD || t == TAG_INJECT ||
+                t == HoldMenu.TAG || t == ShelfDeck.TAG || t == "space-boot"
+            ) return true
             p = cur.parent as? View
         }
         return false
@@ -451,6 +453,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         (content?.findViewWithTag<View>(TAG_LOAD) as? BounceClock)?.stop()
         content?.findViewWithTag<View>(TAG_LOAD)?.visibility = View.GONE
         HoldMenu.hide(activity)
+        content?.findViewWithTag<View>(ShelfDeck.TAG)?.visibility = View.GONE
+        (content?.findViewWithTag<View>("space-boot") as? BootStrip)?.stop()
         waitGame = false
         if (content != null) unshiftOfficial(content, content.findViewWithTag(TAG))
     }
@@ -501,6 +505,18 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             load.visibility = View.GONE
             content.addView(load, FrameLayout.LayoutParams(-1, -1))
             load.elevation = 40f
+        }
+        if (content.findViewWithTag<View>(ShelfDeck.TAG) == null) {
+            val deck = ShelfDeck(activity)
+            content.addView(deck, FrameLayout.LayoutParams(-1, -1))
+            deck.elevation = 22f
+        }
+        if (content.findViewWithTag<View>("space-boot") == null) {
+            val boot = BootStrip(activity)
+            boot.tag = "space-boot"
+            boot.visibility = View.GONE
+            content.addView(boot, FrameLayout.LayoutParams(-1, -1))
+            boot.elevation = 90f
         }
     }
 
@@ -629,19 +645,31 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         } catch (_: Throwable) {
         }
         val panel = content.findViewWithTag<View>(TAG) as? Panel
+        val deck = content.findViewWithTag<ShelfDeck>(ShelfDeck.TAG)
+        val boot = content.findViewWithTag<BootStrip>("space-boot")
         if (shelf) {
             waitGame = false
             LoadOverlay.reset()
             hideChrome(activity)
             panel?.visibility = View.VISIBLE
+            deck?.visibility = View.VISIBLE
+            deck?.fill()
+            boot?.stop()
+            try {
+                FabHide.run(content)
+                activity.window?.decorView?.let { FabHide.run(it) }
+            } catch (_: Throwable) {
+            }
             if (panel != null) panel.post { shiftOfficial(content, panel) }
         } else {
             panel?.collapse()
             panel?.visibility = View.GONE
+            deck?.visibility = View.GONE
             unshiftOfficial(content, panel)
             HoldMenu.hide(activity)
             pinChrome(activity)
             LoadOverlay.tick(activity)
+            if (waitGame || isBooting()) boot?.start() else boot?.stop()
         }
     }
 
@@ -677,7 +705,9 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
         val use = if (h > cap) cap else h
         for (i in 0 until content.childCount) {
             val v = content.getChildAt(i)
-            if (v === panel || v.tag == TAG_HUD || v.tag == TAG_LOAD || v.tag == HoldMenu.TAG) continue
+            if (v === panel || v.tag == TAG_HUD || v.tag == TAG_LOAD || v.tag == HoldMenu.TAG ||
+                v.tag == ShelfDeck.TAG || v.tag == "space-boot"
+            ) continue
             val p = v.layoutParams
             if (p is FrameLayout.LayoutParams) {
                 if (p.topMargin != use) {
@@ -691,7 +721,9 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     private fun unshiftOfficial(content: ViewGroup, panel: View?) {
         for (i in 0 until content.childCount) {
             val v = content.getChildAt(i)
-            if (v === panel || v.tag == TAG_HUD || v.tag == TAG_LOAD || v.tag == HoldMenu.TAG) continue
+            if (v === panel || v.tag == TAG_HUD || v.tag == TAG_LOAD || v.tag == HoldMenu.TAG ||
+                v.tag == ShelfDeck.TAG || v.tag == "space-boot"
+            ) continue
             val p = v.layoutParams
             if (p is FrameLayout.LayoutParams && p.topMargin != 0) {
                 p.topMargin = 0
@@ -736,7 +768,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
     private fun onOurChrome(activity: Activity, ev: MotionEvent): Boolean {
         if (HoldMenu.hits(activity, ev)) return true
         val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return false
-        listOf(TAG, TAG_HUD, TAG_LOAD, TAG_INJECT).forEach { tag ->
+        listOf(TAG, TAG_HUD, TAG_LOAD, TAG_INJECT, ShelfDeck.TAG, "space-boot").forEach { tag ->
             val v = content.findViewWithTag<View>(tag)
             if (v != null && v.visibility == View.VISIBLE && hit(v, ev)) {
                 if (tag == TAG_HUD) {
@@ -826,10 +858,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                         return true
                     }
                     if (grid && !forwarded) {
-                        forwarded = true
-                        captured?.let { base.dispatchTouchEvent(it) }
                         dropCaptured()
-                        return base.dispatchTouchEvent(ev)
+                        return true
                     }
                     dropCaptured()
                 }
@@ -1087,6 +1117,8 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
                     refresh()
                     Toast.makeText(host, r.line(), Toast.LENGTH_LONG).show()
                     FastScan.reloadShelf(host, force = true)
+                    (host.findViewById<ViewGroup>(android.R.id.content)
+                        ?.findViewWithTag<ShelfDeck>(ShelfDeck.TAG))?.fill(true)
                 }
             }, "fast-scan").start()
         }

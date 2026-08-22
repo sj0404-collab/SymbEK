@@ -14,6 +14,7 @@ import android.widget.TextView
 object LoadOverlay {
     private val SPACE = setOf(
         "space-panel", "space-hud", "space-load", "space-load-inject", "space-hold",
+        "space-shelf", "space-boot",
     )
 
     @Volatile private var quiet = 0

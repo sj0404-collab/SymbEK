@@ -10,6 +10,8 @@ object GameExtra {
     data class Bucket(val title: String, val path: String, val count: Int, val bytes: Long)
 
     fun lastTitleId(context: Context): String {
+        val focus = context.getSharedPreferences("kenji_space", 0).getString("focus_title", "") ?: ""
+        if (focus.length >= 8) return focus.uppercase(Locale.US)
         val p = PreferenceManager.getDefaultSharedPreferences(context)
         for (k in arrayOf("lastTitleId", "titleId", "currentTitleId", "gameTitleId")) {
             val v = p.getString(k, "") ?: ""
@@ -54,6 +56,39 @@ object GameExtra {
             }
         }
         return out
+    }
+
+    fun transferSaves(context: Context): String {
+        val edenRoot = DataSeed.edenDir(context) ?: return "папка Eden не задана"
+        val src = File(edenRoot, "nand/user/save")
+        if (!src.isDirectory) return "нет Eden nand/user/save"
+        val dst = File(DataSeed.playHome(context), "bis/user/save")
+        return try {
+            dst.mkdirs()
+            val n = copyTree(src, dst, 0)
+            BootLog.add("saves Eden→Kenji $n файлов")
+            "скопировал $n файлов в ${dst.absolutePath}. индекс Kenji может не подхватить сразу"
+        } catch (t: Throwable) {
+            "не скопировалось: ${t.message}"
+        }
+    }
+
+    private fun copyTree(from: File, to: File, depth: Int): Int {
+        if (depth > 6) return 0
+        var n = 0
+        val kids = from.listFiles() ?: return 0
+        for (f in kids) {
+            if (f.name.startsWith(".")) continue
+            val d = File(to, f.name)
+            if (f.isDirectory) {
+                d.mkdirs()
+                n += copyTree(f, d, depth + 1)
+            } else if (f.isFile && f.length() < 80L * 1024L * 1024L) {
+                f.inputStream().use { inn -> d.outputStream().use { out -> inn.copyTo(out) } }
+                n++
+            }
+        }
+        return n
     }
 
     fun report(context: Context): String {

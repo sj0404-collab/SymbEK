@@ -13,6 +13,9 @@ object GameLaunch {
         if (rom.update) {
             return "это обновление ${rom.titleId} — Kenji рисует Unknown, не игра"
         }
+        if (rom.dlc) {
+            return "это DLC ${rom.titleId} — не базовая игра"
+        }
         if (!rom.file.isFile) return "файла нет: ${rom.file.absolutePath}"
         if (rom.compressed) {
             BootLog.add("launch compressed ${rom.file.name} — Kenji может не открыть NSZ/XCZ")

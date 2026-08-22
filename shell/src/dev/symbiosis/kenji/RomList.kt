@@ -15,11 +15,13 @@ object RomList {
         val titleId: String,
         val bytes: Long,
         val update: Boolean,
+        val dlc: Boolean,
         val compressed: Boolean,
     ) {
         fun line(): String {
             val tag = when {
                 update -> "обновление"
+                dlc -> "DLC"
                 compressed -> "сжат"
                 else -> file.extension.lowercase(Locale.US)
             }

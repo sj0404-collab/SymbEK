@@ -279,8 +279,13 @@ class BounceClock(private val host: Activity) : FrameLayout(host) {
         }
         if (stats) {
             val cpu = CpuMeter.sample()
-            fpsLine.text = String.format(Locale.US, "CPU %d%%  FPS %.0f", cpu, fps)
-            if (fps >= 1.0) LoadOverlay.onGameFps(host)
+            val kenji = FpsProbe.sample()
+            fpsLine.text = if (kenji >= 0) {
+                String.format(Locale.US, "CPU %d%%  Kenji %.0f", cpu, kenji)
+            } else {
+                String.format(Locale.US, "CPU %d%%  FPS ядра нет", cpu)
+            }
+            if (kenji >= 1.0) LoadOverlay.onGameFps(host)
         }
         chip.visibility = if (clock || session || batt || stats || g) View.VISIBLE else View.GONE
     }

@@ -23,6 +23,13 @@ for p in ROOT.rglob("*"):
 if DEX and DEX.is_file():
     shutil.copy2(DEX, ROOT / "classes4.dex")
 
+here = pathlib.Path(__file__).resolve().parent
+space = ROOT / "assets" / "space"
+space.mkdir(parents=True, exist_ok=True)
+for src, name in ((here / "pollination.jpg", "pollination.jpg"), (here / "icon_master.png", "icon.png")):
+    if src.is_file():
+        shutil.copy2(src, space / name)
+
 manifest = ROOT / "AndroidManifest.xml"
 text = manifest.read_text(encoding="utf-8")
 if 'android:name="org.kenjinx.android.MainActivity"' not in text:
