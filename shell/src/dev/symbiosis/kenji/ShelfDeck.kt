@@ -29,6 +29,10 @@ class ShelfDeck(private val host: Activity) : FrameLayout(host) {
     private val play: Button
     private val propsBtn: Button
     private val props: GameProps
+    private val data: DataPanel
+    private val emptyBox: LinearLayout
+    private val emptyText: TextView
+    private val scroller: HorizontalScrollView
     private var selected: RomList.Rom? = null
     private var lastCount = -1
 
@@ -68,7 +72,20 @@ class ShelfDeck(private val host: Activity) : FrameLayout(host) {
         brand.setTextColor(0xFF5EF0E6.toInt())
         brand.setTypeface(Typeface.DEFAULT_BOLD)
         brand.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-        head.addView(brand)
+        head.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
+        val dataBtn = TextView(host)
+        dataBtn.text = "данные"
+        dataBtn.gravity = Gravity.CENTER
+        dataBtn.setTextColor(Color.BLACK)
+        dataBtn.setTypeface(Typeface.DEFAULT_BOLD)
+        dataBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        dataBtn.setPadding(dp(12), dp(6), dp(12), dp(6))
+        val db = GradientDrawable()
+        db.setColor(0xFF5EF0E6.toInt())
+        db.cornerRadius = dp(14).toFloat()
+        dataBtn.background = db
+        dataBtn.setOnClickListener { data.open() }
+        head.addView(dataBtn)
         col.addView(head)
 
         val hint = TextView(host)
@@ -78,13 +95,36 @@ class ShelfDeck(private val host: Activity) : FrameLayout(host) {
         hint.setPadding(0, dp(6), 0, dp(8))
         col.addView(hint)
 
-        val sc = HorizontalScrollView(host)
-        sc.isHorizontalScrollBarEnabled = false
+        scroller = HorizontalScrollView(host)
+        scroller.isHorizontalScrollBarEnabled = false
         row = LinearLayout(host)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
-        sc.addView(row)
-        col.addView(sc, LinearLayout.LayoutParams(-1, dp(210)))
+        scroller.addView(row)
+        col.addView(scroller, LinearLayout.LayoutParams(-1, dp(210)))
+
+        emptyBox = LinearLayout(host)
+        emptyBox.orientation = LinearLayout.VERTICAL
+        emptyBox.visibility = View.GONE
+        val eg = GradientDrawable()
+        eg.setColor(0xE616161C.toInt())
+        eg.cornerRadius = dp(16).toFloat()
+        emptyBox.background = eg
+        emptyBox.setPadding(dp(14), dp(12), dp(14), dp(12))
+        emptyText = TextView(host)
+        emptyText.setTextColor(0xFFF2F2F6.toInt())
+        emptyText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        emptyBox.addView(emptyText)
+        emptyBox.addView(mini("доступ ко всем файлам") {
+            AccessFix.askAllFiles(host)
+            Toast.makeText(host, "включите доступ и нажмите «найти»", Toast.LENGTH_LONG).show()
+        })
+        emptyBox.addView(mini("указать папку игр") { pick("games") })
+        emptyBox.addView(mini("указать Eden / прошивку") { pick("eden") })
+        emptyBox.addView(mini("найти на диске", true) { data.startScan() })
+        val elp = LinearLayout.LayoutParams(-1, -2)
+        elp.topMargin = dp(8)
+        col.addView(emptyBox, elp)
 
         val dock = LinearLayout(host)
         dock.orientation = LinearLayout.VERTICAL
@@ -143,7 +183,9 @@ class ShelfDeck(private val host: Activity) : FrameLayout(host) {
         addView(col, LayoutParams(-1, -1))
         props = GameProps(host)
         addView(props, LayoutParams(-1, -1))
-        fill()
+        data = DataPanel(host)
+        addView(data, LayoutParams(-1, -1))
+        fill(true)
     }
 
     fun fill(force: Boolean = false) {
@@ -155,16 +197,26 @@ class ShelfDeck(private val host: Activity) : FrameLayout(host) {
         lastCount = roms.size
         row.removeAllViews()
         if (roms.isEmpty()) {
-            val empty = TextView(host)
-            empty.setTextColor(0xFFB8B8C4.toInt())
-            empty.text = "нет .nsp/.xci — + папка или «Найти на диске»"
-            row.addView(empty)
+            scroller.visibility = View.GONE
+            emptyBox.visibility = View.VISIBLE
+            val games = GameFolder.currentPath(host)
+            val eden = DataSeed.edenDir(host)
+            emptyText.text = buildString {
+                append("первый запуск или папка не та.\n")
+                append("игры: ").append(games.ifBlank { "не заданы" }).append('\n')
+                append("Eden: ").append(eden ?: "не задана").append('\n')
+                append(if (AccessFix.hasAllFiles()) "доступ: да" else "доступ ко всем файлам: нет")
+                append("\nукажите папки сами — имя не важно.")
+            }
+            selected = null
+            paintDock()
             return
         }
-        if (selected == null) {
+        emptyBox.visibility = View.GONE
+        if (selected == null || roms.none { it.file.absolutePath == selected?.file?.absolutePath }) {
             selected = roms.firstOrNull { !it.update && !it.dlc } ?: roms.first()
-            paintDock()
         }
+        paintDock()
         for (r in roms) row.addView(card(r))
     }
 
@@ -191,7 +243,11 @@ class ShelfDeck(private val host: Activity) : FrameLayout(host) {
         face.setBackgroundColor(0xFF14141A.toInt())
         box.addView(face, LinearLayout.LayoutParams(dp(120), dp(120)))
         val nm = TextView(host)
-        nm.text = r.title
+        nm.text = when {
+            r.update -> "обновление"
+            r.dlc -> "DLC"
+            else -> r.title
+        }
         nm.setTextColor(0xFFF2F2F6.toInt())
         nm.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
         nm.maxLines = 2
@@ -212,8 +268,8 @@ class ShelfDeck(private val host: Activity) : FrameLayout(host) {
     private fun paintDock() {
         val r = selected
         if (r == null) {
-            title.text = "выберите игру"
-            meta.text = ""
+            title.text = if (RomList.list(host).isEmpty()) "нет игр в указанной папке" else "выберите игру"
+            meta.text = "кнопка «данные» — папки, ключи, прошивка"
             play.isEnabled = false
             return
         }
@@ -234,6 +290,29 @@ class ShelfDeck(private val host: Activity) : FrameLayout(host) {
             return
         }
         Toast.makeText(host, GameLaunch.start(host, r, LayerBank.forceNce(host)), Toast.LENGTH_LONG).show()
+    }
+
+    private fun pick(kind: String) {
+        val i = android.content.Intent()
+        i.setClassName(host.packageName, "dev.symbiosis.kenji.PickActivity")
+        i.putExtra("kind", kind)
+        host.startActivity(i)
+    }
+
+    private fun mini(label: String, accent: Boolean = false, click: () -> Unit): Button {
+        val b = Button(host)
+        b.text = label
+        b.isAllCaps = false
+        b.setTextColor(if (accent) Color.BLACK else 0xFFF2F2F6.toInt())
+        val d = GradientDrawable()
+        d.setColor(if (accent) 0xFF5EF0E6.toInt() else 0xFF3A3A44.toInt())
+        d.cornerRadius = dp(14).toFloat()
+        b.background = d
+        val lp = LinearLayout.LayoutParams(-1, -2)
+        lp.topMargin = dp(6)
+        b.layoutParams = lp
+        b.setOnClickListener { click() }
+        return b
     }
 
     companion object {

@@ -302,7 +302,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             val cur = p ?: return false
             val t = cur.tag
             if (t == TAG || t == TAG_HUD || t == TAG_LOAD || t == TAG_INJECT ||
-                t == HoldMenu.TAG || t == ShelfDeck.TAG || t == "space-boot"
+                t == HoldMenu.TAG || t == ShelfDeck.TAG || t == "space-boot" || t == DataPanel.TAG
             ) return true
             p = cur.parent as? View
         }
@@ -651,7 +651,7 @@ object SpaceHook : Application.ActivityLifecycleCallbacks {
             waitGame = false
             LoadOverlay.reset()
             hideChrome(activity)
-            panel?.visibility = View.VISIBLE
+            panel?.visibility = View.GONE
             deck?.visibility = View.VISIBLE
             deck?.fill()
             boot?.stop()
